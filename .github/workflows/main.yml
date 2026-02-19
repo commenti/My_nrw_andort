@@ -21,13 +21,13 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # ARCHITECTURAL WORKAROUND: Setup Gradle manually since Wrapper is missing
+      # ARCHITECTURAL CORRECTION: Use Gradle 8.2 (Standard Stable Release)
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: 8.2.2
+          gradle-version: "8.2"
 
-      # We use 'gradle' command directly instead of './gradlew'
+      # Running with --no-daemon to manage memory efficiently on GitHub runner
       - name: Compile and Assemble APK
         run: gradle assembleDebug --stacktrace --no-daemon
 
