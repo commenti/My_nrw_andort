@@ -21,18 +21,28 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # ARCHITECTURAL CORRECTION: Use Gradle 8.2 (Standard Stable Release)
+      # ARCHITECTURE UPDATE: Upgraded to v4 for faster caching & Node 20 support
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.2"
 
-      # Running with --no-daemon to manage memory efficiently on GitHub runner
+      # Added --info flag for deep logging
       - name: Compile and Assemble APK
-        run: gradle assembleDebug --stacktrace --no-daemon
+        run: gradle assembleDebug --stacktrace --info --no-daemon
+
+      # 🚨 NEW EMERGENCY PROTOCOL: Catching the exact error if AAPT2 or Kotlin fails
+      - name: Upload Build Reports (On Failure)
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-failure-reports
+          path: app/build/reports/
+          retention-days: 3
 
       - name: Upload Finished Artifact
         uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: kall-worker-debug
           path: app/build/outputs/apk/debug/app-debug.apk
