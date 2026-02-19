@@ -6,11 +6,6 @@ on:
   pull_request:
     branches: [ "main", "master" ]
 
-# ARCHITECTURE CONTRACT: CI/CD Pipeline
-# Runner: Ubuntu Latest
-# Environment: JDK 17
-# Output: Debug APK (kall-worker-release.apk)
-
 jobs:
   build:
     name: Build Production Worker APK
@@ -25,14 +20,16 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
 
-      # CRITICAL: Gradle Wrapper (gradlew) must have execute permissions
-      - name: Grant Execute Permission for Gradlew
-        run: chmod +x gradlew
+      # ARCHITECTURAL WORKAROUND: Setup Gradle manually since Wrapper is missing
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.2.2
 
+      # We use 'gradle' command directly instead of './gradlew'
       - name: Compile and Assemble APK
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
+        run: gradle assembleDebug --stacktrace --no-daemon
 
       - name: Upload Finished Artifact
         uses: actions/upload-artifact@v4
