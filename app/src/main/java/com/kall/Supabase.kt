@@ -16,31 +16,28 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+// CRITICAL: Required for extracting data from the Realtime JSON record
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * ARCHITECTURE CONTRACT: Supabase.kt
- * Role: The Nervous System (Network Singleton & Realtime Listener).
- * Constraints: Background thread execution ONLY. No UI references.
+ * ARCHITECTURE CONTRACT: SupabaseManager (The Nervous System)
+ * Responsibility: Singleton for database interactions and Realtime event streaming.
+ * Version: 2.1 (Optimized for Kotlin 1.9.22 + Supabase 2.0.0)
  */
 object SupabaseManager {
 
-    private const val TAG = "NeuroLink_NervousSystem"
+    private const val TAG = "Kall_NervousSystem"
     private const val TABLE_QUEUE = "interaction_queue"
 
-    // WARNING: In production, inject these via BuildConfig or Secure Enclave.
-    // Hardcoding here strictly for the micro-architecture template.
+    // Replace with your actual credentials from Supabase Dashboard
     private const val SUPABASE_URL = "https://aeopowovqksexgvseiyq.supabase.co"
     private const val SUPABASE_KEY = "sb_publishable_HX5GTYwHATs3gTksy-ZV9w_AQNIfM7t"
 
     private lateinit var client: SupabaseClient
     private val networkScope = CoroutineScope(Dispatchers.IO + Job())
 
-    /**
-     * Initializes the Supabase client and starts the Realtime WebSocket connection.
-     * @param onNewTask Callback triggered when a new 'pending' task arrives.
-     */
     fun initializeNetworkListener(onNewTask: (InteractionTask) -> Unit) {
-        Log.i(TAG, "SYSTEM BOOT: Initializing Supabase Client...")
+        Log.i(TAG, "SYSTEM BOOT: Initializing Supabase Connection...")
         
         client = createSupabaseClient(
             supabaseUrl = SUPABASE_URL,
@@ -52,93 +49,85 @@ object SupabaseManager {
 
         networkScope.launch {
             try {
-                // Connect WebSocket
                 client.realtime.connect()
-                Log.i(TAG, "REALTIME: WebSocket Connected.")
+                Log.i(TAG, "REALTIME: WebSocket Secure Connected.")
                 
-                listenForPendingTasks(onNewTask)
+                val channel = client.realtime.channel("public-queue")
+                
+                // Listening for INSERT events on interaction_queue
+                val changeFlow = channel.postgresChangeFlow<PostgresAction.Insert>(
+                    schema = "public"
+                ) {
+                    table = TABLE_QUEUE
+                }
+
+                changeFlow.onEach { action ->
+                    val record = action.record
+                    Log.d(TAG, "EVENT: New row detected. Filtering for status=pending...")
+
+                    // Check if status is pending before processing
+                    val status = record["status"]?.jsonPrimitive?.content
+                    if (status == "pending") {
+                        val task = InteractionTask(
+                            id = record["id"]?.jsonPrimitive?.content ?: "",
+                            prompt = record["prompt"]?.jsonPrimitive?.content ?: "",
+                            status = "pending"
+                        )
+
+                        if (task.id.isNotEmpty()) {
+                            // Atomic Lock: Ensure this worker claims the task
+                            if (lockTask(task.id)) {
+                                onNewTask(task)
+                            }
+                        }
+                    }
+                }.launchIn(this)
+
+                channel.subscribe()
+                
             } catch (e: Exception) {
-                Log.e(TAG, "FATAL: Failed to connect Realtime - ${e.message}")
+                Log.e(TAG, "FATAL: Connectivity lost in Nervous System - ${e.message}")
             }
         }
     }
 
     /**
-     * Subscribes to database INSERT events where status is 'pending'.
-     */
-    private suspend fun listenForPendingTasks(onNewTask: (InteractionTask) -> Unit) {
-        val channel = client.channel("public-$TABLE_QUEUE")
-
-        val changeFlow = channel.postgresChangeFlow<PostgresAction.Insert>(
-            schema = "public",
-        ) {
-            table = TABLE_QUEUE
-            filter = "status=eq.pending"
-        }
-
-        changeFlow.onEach { action ->
-            val record = action.record
-            Log.i(TAG, "SIGNAL RECEIVED: New task detected in database.")
-            
-            // Map JSON response to Kotlin Data Class (api.kt)
-            val task = InteractionTask(
-                id = record["id"]?.jsonPrimitive?.content ?: return@onEach,
-                prompt = record["prompt"]?.jsonPrimitive?.content ?: return@onEach,
-                status = "pending"
-            )
-
-            // Lock the task immediately to prevent race conditions with other workers
-            if (lockTask(task.id)) {
-                onNewTask(task)
-            }
-        }.launchIn(networkScope)
-
-        channel.subscribe()
-    }
-
-    /**
-     * Row-Level Lock Simulation: Updates status to 'processing'.
-     * @return true if successfully locked, false if another worker took it.
+     * ROW-LEVEL LOCKING: Atomically updates status to 'processing'.
+     * Uses Postgrest DSL for v2.0.0.
      */
     private suspend fun lockTask(taskId: String): Boolean {
         return try {
-            client.postgrest[TABLE_QUEUE]
-                .update({
-                    set("status", "processing")
-                }) {
-                    filter {
-                        InteractionTask::id eq taskId
-                        InteractionTask::status eq "pending"
-                    }
+            client.postgrest[TABLE_QUEUE].update({
+                set("status", "processing")
+            }) {
+                filter {
+                    eq("id", taskId)
+                    eq("status", "pending")
                 }
-            Log.i(TAG, "LOCK ACQUIRED: Task $taskId status -> processing")
+            }
+            Log.i(TAG, "LOCK: Task $taskId is now mine.")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "LOCK FAILED: Task $taskId may have been claimed. ${e.message}")
+            Log.e(TAG, "LOCK ERROR: Task $taskId might be taken - ${e.message}")
             false
         }
     }
 
     /**
-     * Handshake from MainActivity: Updates the database with the harvested AI response.
+     * FINAL HANDSHAKE: Update result and status to DB.
      */
     fun updateTaskAndAcknowledge(task: InteractionTask) {
         networkScope.launch {
             try {
-                Log.i(TAG, "DISPATCHING: Sending harvested response to Database for Task ${task.id}")
-                
-                client.postgrest[TABLE_QUEUE]
-                    .update({
-                        set("response", task.response)
-                        set("status", task.status) // 'COMPLETED' or 'FAILED'
-                    }) {
-                        filter { InteractionTask::id eq task.id }
-                    }
-                    
-                Log.i(TAG, "TRANSACTION COMPLETE: Task ${task.id} finalized.")
+                client.postgrest[TABLE_QUEUE].update({
+                    set("response", task.response)
+                    set("status", task.status)
+                }) {
+                    filter { eq("id", task.id) }
+                }
+                Log.i(TAG, "SUCCESS: Task ${task.id} finalized in cloud.")
             } catch (e: Exception) {
-                Log.e(TAG, "TRANSACTION FAILED: Could not save response for Task ${task.id} - ${e.message}")
-                // Implement retry queue logic here if network drops temporarily
+                Log.e(TAG, "DB ERROR: Failed to acknowledge task ${task.id} - ${e.message}")
             }
         }
     }
