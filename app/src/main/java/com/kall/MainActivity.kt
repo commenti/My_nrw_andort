@@ -14,8 +14,7 @@ import androidx.appcompat.app.AppCompatActivity
 /**
  * ARCHITECTURE CONTRACT: MainActivity.kt
  * Role: The Executor (Headless WebView & State Machine).
- * Constraints: No XML Layouts. Single Responsibility: DOM Manipulation & JS Bridge.
- * Version: 2.1 (Production Ready - Integrated with SupabaseManager)
+ * Logic: Receives Task -> Injects JS -> Observes DOM -> Returns Result.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -32,16 +31,16 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // ARCHITECTURE RULE: Prevent OS Doze Mode & Screen Sleep
+        // Rule 1: CPU aur Screen ko sone nahi dena (Worker stability)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         setupHeadlessWebView()
         
-        // ARCHITECTURE RULE: Zero XML. Programmatic view attachment.
+        // Rule 2: Zero XML. Direct view attachment.
         setContentView(webView)
 
-        // PHASE 1: Initialize connection to The Nervous System (Supabase)
-        // Passing '::onNewTaskReceived' as a functional reference
+        // Rule 3: Nervous System (Supabase) connection start karo
+        Log.d(TAG, "BOOT: Initializing Network Handshake...")
         SupabaseManager.initializeNetworkListener(this::onNewTaskReceived)
     }
 
@@ -51,21 +50,24 @@ class MainActivity : AppCompatActivity() {
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 databaseEnabled = true
-                // Anti-Bot Evasion: Present as Desktop Chrome
+                // Desktop User Agent: AI tools mobile par restrict ho sakte hain
                 userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
 
-            // Establish the Bridge for JS <-> Kotlin communication
+            // JavaScript <-> Kotlin Bridge
             addJavascriptInterface(NeuroBridge(), "AndroidBridge")
 
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     isPageLoaded = true
-                    Log.i(TAG, "STATE: Page Loaded. Worker Ready.")
+                    Log.i(TAG, "STATE: Engine Ready. Page Fully Loaded.")
                     
-                    // Process task if it arrived during page load
-                    currentTask?.let { executeTask(it) }
+                    // Agar page load hone se pehle koi task queue mein tha, usey ab chalao
+                    currentTask?.let { 
+                        Log.i(TAG, "STATE: Executing buffered task ${it.id}")
+                        executeTask(it) 
+                    }
                 }
 
                 override fun onReceivedError(
@@ -73,7 +75,7 @@ class MainActivity : AppCompatActivity() {
                     request: WebResourceRequest?,
                     error: WebResourceError?
                 ) {
-                    Log.e(TAG, "NETWORK ERROR: ${error?.description}")
+                    Log.e(TAG, "NETWORK ERROR: ${error?.description}. Attempting reload.")
                     triggerSelfHealingProtocol()
                 }
             }
@@ -83,59 +85,55 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Entry point for incoming data from SupabaseManager.
-     * Guaranteed to run on Main Thread for WebView safety.
+     * Data entry point from SupabaseManager.
      */
     fun onNewTaskReceived(task: InteractionTask) {
         runOnUiThread {
-            Log.i(TAG, "STATE: Task ${task.id} Received.")
+            Log.i(TAG, "SIGNAL: New Task ${task.id} incoming.")
             currentTask = task
             if (isPageLoaded) {
                 executeTask(task)
             } else {
-                Log.w(TAG, "WAIT: Page loading. Task ${task.id} buffered.")
+                Log.w(TAG, "BUFFER: Page load pending. Task ${task.id} queued.")
             }
         }
     }
 
     private fun executeTask(task: InteractionTask) {
-        Log.i(TAG, "ACTION: Dispatching Task ${task.id} to DOM.")
+        Log.i(TAG, "ACTION: Dispatching Payload for Task ${task.id}")
+        // JsInjector file se script uthao
         val script = JsInjector.buildDispatchScript(task.prompt)
         webView.evaluateJavascript(script, null)
     }
 
     private fun triggerSelfHealingProtocol() {
-        Log.w(TAG, "ACTION: Self-Healing Triggered (WebView Reload).")
+        Log.w(TAG, "HEAL: WebView unstable. Reloading in 3s...")
         isPageLoaded = false
-        webView.reload()
+        webView.postDelayed({ webView.reload() }, 3000)
     }
 
     /**
-     * NEURO-BRIDGE: The link between AI Web UI and Android Logic.
-     * Methods run on a Background Thread (WebView Thread).
+     * BRIDGE: JS logic results yahan aate hain
      */
     inner class NeuroBridge {
 
         @JavascriptInterface
         fun onInjectionSuccess(message: String) {
-            Log.i(TAG, "BRIDGE: Payload Injected Successfully.")
+            Log.i(TAG, "JS: Input injected successfully.")
             runOnUiThread {
-                // Initialize MutationObserver to harvest streaming response
+                // Response stream observe karne ke liye harvester chalao
                 webView.evaluateJavascript(JsInjector.HARVESTER_SCRIPT, null)
             }
         }
 
         @JavascriptInterface
         fun onResponseHarvested(response: String) {
-            Log.i(TAG, "BRIDGE: Data Harvested.")
+            Log.i(TAG, "JS: Harvesting Complete.")
             runOnUiThread {
                 currentTask?.let {
                     val completedTask = it.copy(response = response, status = "COMPLETED")
-                    
-                    // PHASE 2: Handshake back to Supabase layer
                     SupabaseManager.updateTaskAndAcknowledge(completedTask)
-                    
-                    Log.i(TAG, "STATE: Task ${it.id} Completed successfully.")
+                    Log.i(TAG, "FINISH: Task ${it.id} processed.")
                 }
                 currentTask = null
             }
@@ -143,7 +141,7 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun onError(errorMessage: String) {
-            Log.e(TAG, "BRIDGE ERROR: $errorMessage")
+            Log.e(TAG, "JS ERROR: $errorMessage")
             runOnUiThread {
                 currentTask?.let {
                     val failedTask = it.copy(response = errorMessage, status = "FAILED")
@@ -156,7 +154,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        // Clean up resources to prevent memory leaks
         webView.removeJavascriptInterface("AndroidBridge")
         webView.destroy()
         super.onDestroy()
