@@ -1,0 +1,64 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.serialization'
+}
+
+android {
+    namespace 'com.kall'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.kall"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            // ARCHITECTURE RULE: Production-grade code must be obfuscated
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    buildFeatures {
+        // Explicitly disabled to prevent bloat and CI/CD overhead
+        viewBinding false
+        compose false
+    }
+}
+
+dependencies {
+    // AndroidX Core (Minimalist UI)
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+
+    // Supabase (Postgrest for DB, Realtime for WebSockets)
+    // Version 2.0.0 is stable and follows Kotlin multiplatform standards
+    implementation "io.github.jan-tennert.supabase:postgrest-kt:2.0.0"
+    implementation "io.github.jan-tennert.supabase:realtime-kt:2.0.0"
+    
+    // Ktor Engine for Android (Networking backend for Supabase)
+    implementation "io.ktor:ktor-client-android:2.3.7"
+
+    // JSON Serialization (Required for InteractionTask in api.kt)
+    implementation "org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2"
+
+    // Asynchronous Flow (Required for Database Listeners)
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
+}

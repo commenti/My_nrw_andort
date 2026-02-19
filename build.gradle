@@ -1,0 +1,36 @@
+// ARCHITECTURE CONTRACT: Project-level build.gradle
+// Role: Global Build Configuration & Plugin Registry.
+// Constraints: Groovy DSL, Version alignment for Android SDK 34.
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        // Aligned with Android Gradle Plugin (AGP) for stable SDK 34 builds
+        classpath "com.android.tools.build:gradle:8.2.2"
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.22"
+        // Required for the @Serializable contracts in api.kt
+        classpath "org.jetbrains.kotlin:kotlin-serialization:1.9.22"
+    }
+}
+
+plugins {
+    // Define plugins without applying them to the root project
+    id 'com.android.application' version '8.2.2' apply false
+    id 'com.android.library' version '8.2.2' apply false
+    id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+    id 'org.jetbrains.kotlin.plugin.serialization' version '1.9.22' apply false
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+tasks.register('clean', Delete) {
+    delete rootProject.buildDir
+}
