@@ -1,9 +1,12 @@
 package com.kall
 
 import android.annotation.SuppressLint
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.WindowManager
+import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -15,6 +18,7 @@ import androidx.appcompat.app.AppCompatActivity
  * ARCHITECTURE CONTRACT: MainActivity.kt
  * Role: The Executor (Headless WebView & State Machine).
  * Logic: Receives Task -> Injects JS -> Observes DOM -> Returns Result.
+ * UPDATE: Added Cookie Persistence & Foreground Service trigger for Android 14/15.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -31,17 +35,29 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Rule 1: CPU aur Screen ko sone nahi dena (Worker stability)
+        // Rule 1: CPU और स्क्रीन को सोने नहीं देना (Worker stability)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // Rule 2: Android 14/15 के लिए बैकग्राउंड सर्विस चालू करें (CRITICAL)
+        startWorkerService()
 
         setupHeadlessWebView()
         
-        // Rule 2: Zero XML. Direct view attachment.
+        // Rule 3: Zero XML. Direct view attachment.
         setContentView(webView)
 
-        // Rule 3: Nervous System (Supabase) connection start karo
+        // Rule 4: Nervous System (Supabase) connection start
         Log.d(TAG, "BOOT: Initializing Network Handshake...")
         SupabaseManager.initializeNetworkListener(this::onNewTaskReceived)
+    }
+
+    private fun startWorkerService() {
+        val serviceIntent = Intent(this, WorkerService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
     }
 
     private fun setupHeadlessWebView() {
@@ -50,20 +66,26 @@ class MainActivity : AppCompatActivity() {
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 databaseEnabled = true
-                // Desktop User Agent: AI tools mobile par restrict ho sakte hain
                 userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
 
-            // JavaScript <-> Kotlin Bridge
+            // CRITICAL UPDATE: SESSION PERSISTENCE (कुकीज हमेशा के लिए सेव करें)
+            val cookieManager = CookieManager.getInstance()
+            cookieManager.setAcceptCookie(true)
+            cookieManager.setAcceptThirdPartyCookies(this, true)
+
             addJavascriptInterface(NeuroBridge(), "AndroidBridge")
 
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
+                    
+                    // कुकीज़ को डिस्क पर फ्लश (save) करें
+                    CookieManager.getInstance().flush()
+                    
                     isPageLoaded = true
                     Log.i(TAG, "STATE: Engine Ready. Page Fully Loaded.")
                     
-                    // Agar page load hone se pehle koi task queue mein tha, usey ab chalao
                     currentTask?.let { 
                         Log.i(TAG, "STATE: Executing buffered task ${it.id}")
                         executeTask(it) 
@@ -84,9 +106,6 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl(TARGET_URL)
     }
 
-    /**
-     * Data entry point from SupabaseManager.
-     */
     fun onNewTaskReceived(task: InteractionTask) {
         runOnUiThread {
             Log.i(TAG, "SIGNAL: New Task ${task.id} incoming.")
@@ -101,7 +120,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun executeTask(task: InteractionTask) {
         Log.i(TAG, "ACTION: Dispatching Payload for Task ${task.id}")
-        // JsInjector file se script uthao
         val script = JsInjector.buildDispatchScript(task.prompt)
         webView.evaluateJavascript(script, null)
     }
@@ -112,16 +130,12 @@ class MainActivity : AppCompatActivity() {
         webView.postDelayed({ webView.reload() }, 3000)
     }
 
-    /**
-     * BRIDGE: JS logic results yahan aate hain
-     */
     inner class NeuroBridge {
 
         @JavascriptInterface
         fun onInjectionSuccess(message: String) {
             Log.i(TAG, "JS: Input injected successfully.")
             runOnUiThread {
-                // Response stream observe karne ke liye harvester chalao
                 webView.evaluateJavascript(JsInjector.HARVESTER_SCRIPT, null)
             }
         }
