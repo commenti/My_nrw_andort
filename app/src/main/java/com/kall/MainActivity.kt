@@ -18,7 +18,7 @@ import androidx.appcompat.app.AppCompatActivity
  * ARCHITECTURE CONTRACT: MainActivity.kt
  * Role: The Executor (Headless WebView & State Machine).
  * Logic: Receives Task -> Injects JS -> Observes DOM -> Returns Result.
- * UPDATE: Added Cookie Persistence & Foreground Service trigger for Android 14/15.
+ * UPDATE: Added Cookie Persistence & Background Service logic.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -35,18 +35,18 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Rule 1: CPU और स्क्रीन को सोने नहीं देना (Worker stability)
+        // Rule 1: CPU aur Screen ko sone nahi dena (Worker stability)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        // Rule 2: Android 14/15 के लिए बैकग्राउंड सर्विस चालू करें (CRITICAL)
+        // CRITICAL UPDATE: Start Background Service for Android 14/15
         startWorkerService()
 
         setupHeadlessWebView()
         
-        // Rule 3: Zero XML. Direct view attachment.
+        // Rule 2: Zero XML. Direct view attachment.
         setContentView(webView)
 
-        // Rule 4: Nervous System (Supabase) connection start
+        // Rule 3: Nervous System (Supabase) connection start karo
         Log.d(TAG, "BOOT: Initializing Network Handshake...")
         SupabaseManager.initializeNetworkListener(this::onNewTaskReceived)
     }
@@ -74,13 +74,14 @@ class MainActivity : AppCompatActivity() {
             cookieManager.setAcceptCookie(true)
             cookieManager.setAcceptThirdPartyCookies(this, true)
 
+            // JavaScript <-> Kotlin Bridge
             addJavascriptInterface(NeuroBridge(), "AndroidBridge")
 
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     
-                    // कुकीज़ को डिस्क पर फ्लश (save) करें
+                    // Force save cookies to disk immediately
                     CookieManager.getInstance().flush()
                     
                     isPageLoaded = true
