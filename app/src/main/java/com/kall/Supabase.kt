@@ -16,20 +16,20 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
-// CRITICAL: Required for extracting data from the Realtime JSON record
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * ARCHITECTURE CONTRACT: SupabaseManager (The Nervous System)
- * Responsibility: Singleton for database interactions and Realtime event streaming.
- * Version: 2.1 (Optimized for Kotlin 1.9.22 + Supabase 2.0.0)
+ * Version: 2.2 (Updated for 'ai_tasks' table)
  */
 object SupabaseManager {
 
     private const val TAG = "Kall_NervousSystem"
-    private const val TABLE_QUEUE = "interaction_queue"
+    
+    // CRITICAL FIX: Changed from 'interaction_queue' to 'ai_tasks' based on new SQL
+    private const val TABLE_QUEUE = "ai_tasks"
 
-    // Replace with your actual credentials from Supabase Dashboard
+    // Your existing credentials
     private const val SUPABASE_URL = "https://aeopowovqksexgvseiyq.supabase.co"
     private const val SUPABASE_KEY = "sb_publishable_HX5GTYwHATs3gTksy-ZV9w_AQNIfM7t"
 
@@ -52,9 +52,8 @@ object SupabaseManager {
                 client.realtime.connect()
                 Log.i(TAG, "REALTIME: WebSocket Secure Connected.")
                 
-                val channel = client.realtime.channel("public-queue")
+                val channel = client.realtime.channel("public-ai-tasks")
                 
-                // Listening for INSERT events on interaction_queue
                 val changeFlow = channel.postgresChangeFlow<PostgresAction.Insert>(
                     schema = "public"
                 ) {
@@ -65,7 +64,6 @@ object SupabaseManager {
                     val record = action.record
                     Log.d(TAG, "EVENT: New row detected. Filtering for status=pending...")
 
-                    // Check if status is pending before processing
                     val status = record["status"]?.jsonPrimitive?.content
                     if (status == "pending") {
                         val task = InteractionTask(
@@ -75,7 +73,6 @@ object SupabaseManager {
                         )
 
                         if (task.id.isNotEmpty()) {
-                            // Atomic Lock: Ensure this worker claims the task
                             if (lockTask(task.id)) {
                                 onNewTask(task)
                             }
@@ -91,10 +88,6 @@ object SupabaseManager {
         }
     }
 
-    /**
-     * ROW-LEVEL LOCKING: Atomically updates status to 'processing'.
-     * Uses Postgrest DSL for v2.0.0.
-     */
     private suspend fun lockTask(taskId: String): Boolean {
         return try {
             client.postgrest[TABLE_QUEUE].update({
@@ -113,9 +106,6 @@ object SupabaseManager {
         }
     }
 
-    /**
-     * FINAL HANDSHAKE: Update result and status to DB.
-     */
     fun updateTaskAndAcknowledge(task: InteractionTask) {
         networkScope.launch {
             try {
