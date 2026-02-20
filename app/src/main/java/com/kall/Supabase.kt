@@ -9,10 +9,10 @@ import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.postgresChangeFlow
-import io.github.jan.supabase.realtime.realtime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
@@ -20,16 +20,13 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * ARCHITECTURE CONTRACT: SupabaseManager (The Nervous System)
- * Version: 2.2 (Updated for 'ai_tasks' table)
+ * Version: 2.3 (Added Polling Fallback to prevent Silent WebSocket Drops)
  */
 object SupabaseManager {
 
     private const val TAG = "Kall_NervousSystem"
-    
-    // CRITICAL FIX: Changed from 'interaction_queue' to 'ai_tasks' based on new SQL
     private const val TABLE_QUEUE = "ai_tasks"
 
-    // Your existing credentials
     private const val SUPABASE_URL = "https://aeopowovqksexgvseiyq.supabase.co"
     private const val SUPABASE_KEY = "sb_publishable_HX5GTYwHATs3gTksy-ZV9w_AQNIfM7t"
 
@@ -48,42 +45,68 @@ object SupabaseManager {
         }
 
         networkScope.launch {
-            try {
-                client.realtime.connect()
-                Log.i(TAG, "REALTIME: WebSocket Secure Connected.")
-                
-                val channel = client.realtime.channel("public-ai-tasks")
-                
-                val changeFlow = channel.postgresChangeFlow<PostgresAction.Insert>(
-                    schema = "public"
-                ) {
-                    table = TABLE_QUEUE
-                }
-
-                changeFlow.onEach { action ->
-                    val record = action.record
-                    Log.d(TAG, "EVENT: New row detected. Filtering for status=pending...")
-
-                    val status = record["status"]?.jsonPrimitive?.content
-                    if (status == "pending") {
-                        val task = InteractionTask(
-                            id = record["id"]?.jsonPrimitive?.content ?: "",
-                            prompt = record["prompt"]?.jsonPrimitive?.content ?: "",
-                            status = "pending"
-                        )
-
-                        if (task.id.isNotEmpty()) {
-                            if (lockTask(task.id)) {
-                                onNewTask(task)
-                            }
-                        }
+            
+            // ==========================================
+            // METHOD 1: REALTIME (घंटी बजने का इंतज़ार)
+            // ==========================================
+            launch {
+                try {
+                    client.realtime.connect()
+                    Log.i(TAG, "REALTIME: WebSocket Secure Connected.")
+                    
+                    val channel = client.realtime.channel("public-ai-tasks")
+                    val changeFlow = channel.postgresChangeFlow<PostgresAction.Insert>(schema = "public") {
+                        table = TABLE_QUEUE
                     }
-                }.launchIn(this)
 
-                channel.subscribe()
-                
-            } catch (e: Exception) {
-                Log.e(TAG, "FATAL: Connectivity lost in Nervous System - ${e.message}")
+                    changeFlow.onEach { action ->
+                        val record = action.record
+                        val status = record["status"]?.jsonPrimitive?.content
+                        if (status == "pending") {
+                            val task = InteractionTask(
+                                id = record["id"]?.jsonPrimitive?.content ?: "",
+                                prompt = record["prompt"]?.jsonPrimitive?.content ?: "",
+                                status = "pending"
+                            )
+                            handlePendingTask(task, onNewTask)
+                        }
+                    }.launchIn(this)
+
+                    channel.subscribe()
+                } catch (e: Exception) {
+                    Log.e(TAG, "FATAL: Connectivity lost in Nervous System - ${e.message}")
+                }
+            }
+
+            // ==========================================
+            // METHOD 2: POLLING FALLBACK (हर 3 सेकंड में चेक करना)
+            // ==========================================
+            launch {
+                while(true) {
+                    try {
+                        // डेटाबेस से 'pending' स्टेटस वाले टास्क मांगो
+                        val pendingTasks = client.postgrest[TABLE_QUEUE]
+                            .select { filter { eq("status", "pending") } }
+                            .decodeList<InteractionTask>()
+
+                        // अगर कोई टास्क मिला, तो उसे प्रोसेस करो
+                        if (pendingTasks.isNotEmpty()) {
+                            handlePendingTask(pendingTasks.first(), onNewTask)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "POLLING ERROR: ${e.message}") // साइलेंट इग्नोर ताकि लूप न टूटे
+                    }
+                    delay(3000) // 3 सेकंड का इंतज़ार
+                }
+            }
+        }
+    }
+
+    // DRY Principle: दोनों मेथड इसी फंक्शन का इस्तेमाल करेंगे
+    private suspend fun handlePendingTask(task: InteractionTask, onNewTask: (InteractionTask) -> Unit) {
+        if (task.id.isNotEmpty()) {
+            if (lockTask(task.id)) {
+                onNewTask(task)
             }
         }
     }
