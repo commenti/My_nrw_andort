@@ -18,7 +18,7 @@ import androidx.appcompat.app.AppCompatActivity
  * ARCHITECTURE CONTRACT: MainActivity.kt
  * Role: The Executor (Headless WebView & State Machine).
  * Logic: Receives Task -> Injects JS -> Observes DOM -> Returns Result.
- * UPDATE: Removed Desktop UserAgent for perfect Mobile Responsive UI.
+ * UPDATE: Added Chunking Support & Lowercase Status ('completed' / 'failed') for Python CLI.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -35,15 +35,15 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Rule 1: CPU aur Screen ko sone nahi dena
+        // Rule 1: CPU और स्क्रीन को सोने नहीं देना
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        // Rule 2: Start Background Service for Android 14/15
+        // Rule 2: Android 14/15 के लिए Background Service स्टार्ट करना
         startWorkerService()
 
         setupHeadlessWebView()
         
-        // Rule 3: Zero XML. Direct view attachment.
+        // Rule 3: Direct view attachment (बिना XML के)
         setContentView(webView)
 
         // Rule 4: Nervous System (Supabase) connection start
@@ -66,8 +66,7 @@ class MainActivity : AppCompatActivity() {
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 databaseEnabled = true
-                // 🚨 CRITICAL FIX: Desktop UserAgent has been removed.
-                // Now Qwen will load in its native Mobile-Responsive layout.
+                // Desktop UserAgent हटा दिया गया है ताकि Mobile Responsive UI न टूटे
             }
 
             val cookieManager = CookieManager.getInstance()
@@ -120,13 +119,12 @@ class MainActivity : AppCompatActivity() {
         webView.evaluateJavascript(script, null)
     }
 
-        private fun triggerSelfHealingProtocol() {
+    private fun triggerSelfHealingProtocol() {
         Log.w(TAG, "HEAL: WebView unstable. Reloading in 3s...")
         
-        // 🚨 HACKER FIX: Infinite Loop Break 
-        // अगर पेज क्रैश होता है, तो टास्क को फेल कर दो ताकि वो बार-बार रन न हो।
+        // 🚨 PYTHON CLI FIX: Status updated to 'failed' (छोटे अक्षरों में)
         currentTask?.let {
-            val failedTask = it.copy(response = "SYSTEM_ERROR: Mobile UI form submission caused page reload.", status = "FAILED")
+            val failedTask = it.copy(response = "SYSTEM_ERROR: Mobile UI form submission caused page reload.", status = "failed")
             SupabaseManager.updateTaskAndAcknowledge(failedTask)
         }
         currentTask = null 
@@ -135,12 +133,20 @@ class MainActivity : AppCompatActivity() {
         webView.postDelayed({ webView.reload() }, 3000)
     }
 
-
+    // ==========================================
+    // THE BRIDGE: Android <---> JavaScript
+    // ==========================================
     inner class NeuroBridge {
+        
+        // 🚨 NEW: भारी डेटा (Python Context) को ट्रैक करने के लिए Chunk Observer
+        @JavascriptInterface
+        fun onChunkProgress(currentChunk: Int, totalChunks: Int) {
+            Log.i(TAG, "JS: Injecting chunk $currentChunk of $totalChunks...")
+        }
 
         @JavascriptInterface
         fun onInjectionSuccess(message: String) {
-            Log.i(TAG, "JS: Input injected successfully.")
+            Log.i(TAG, "JS: Payload fully injected & dispatched. Starting Harvester...")
             runOnUiThread {
                 webView.evaluateJavascript(JsInjector.HARVESTER_SCRIPT, null)
             }
@@ -151,9 +157,10 @@ class MainActivity : AppCompatActivity() {
             Log.i(TAG, "JS: Harvesting Complete.")
             runOnUiThread {
                 currentTask?.let {
-                    val completedTask = it.copy(response = response, status = "COMPLETED")
+                    // 🚨 PYTHON CLI FIX: Status strictly 'completed' (छोटे अक्षरों में)
+                    val completedTask = it.copy(response = response, status = "completed")
                     SupabaseManager.updateTaskAndAcknowledge(completedTask)
-                    Log.i(TAG, "FINISH: Task ${it.id} processed.")
+                    Log.i(TAG, "FINISH: Task ${it.id} processed & sent back to Python.")
                 }
                 currentTask = null
             }
@@ -164,7 +171,8 @@ class MainActivity : AppCompatActivity() {
             Log.e(TAG, "JS ERROR: $errorMessage")
             runOnUiThread {
                 currentTask?.let {
-                    val failedTask = it.copy(response = errorMessage, status = "FAILED")
+                    // 🚨 PYTHON CLI FIX: Status strictly 'failed' (छोटे अक्षरों में)
+                    val failedTask = it.copy(response = errorMessage, status = "failed")
                     SupabaseManager.updateTaskAndAcknowledge(failedTask)
                 }
                 currentTask = null
