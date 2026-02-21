@@ -2,8 +2,11 @@ package com.kall
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import android.view.WindowManager
 import android.webkit.CookieManager
@@ -18,7 +21,7 @@ import androidx.appcompat.app.AppCompatActivity
  * ARCHITECTURE CONTRACT: MainActivity.kt
  * Role: The Executor (Headless WebView & State Machine).
  * Logic: Receives Task -> Injects JS -> Observes DOM -> Returns Result.
- * UPDATE: Added Background-Execution Hacks (Offscreen Raster & Timer Forcing) + Chunking Support.
+ * UPDATE: Added "Immortality Protocol" - Battery Exemption & Web Audio Hack Integration.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -38,6 +41,9 @@ class MainActivity : AppCompatActivity() {
         // Rule 1: CPU और स्क्रीन को सोने नहीं देना
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        // 🚨 IMMORTALITY HACK 1: बैटरी ऑप्टिमाइज़ेशन से ऐप को बाहर निकालना
+        requestBatteryExemption()
+
         // Rule 2: Android 14/15 के लिए Background Service स्टार्ट करना
         startWorkerService()
 
@@ -49,6 +55,20 @@ class MainActivity : AppCompatActivity() {
         // Rule 4: Nervous System (Supabase) connection start
         Log.d(TAG, "BOOT: Initializing Network Handshake...")
         SupabaseManager.initializeNetworkListener(this::onNewTaskReceived)
+    }
+
+    // यह फंक्शन OS को ऐप मारने से रोकेगा (Battery Bypass)
+    private fun requestBatteryExemption() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                Log.w(TAG, "BATTERY: Requesting exemption to prevent deep sleep.")
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivity(intent)
+            }
+        }
     }
 
     private fun startWorkerService() {
