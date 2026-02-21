@@ -1,50 +1,55 @@
-name: Kall-Android-Production-Build
+name: Error Spy Agent 🕵️‍♂️
 
 on:
+  workflow_dispatch: # यह तुम्हें GitHub से एक बटन दबाकर इसे रन करने की ताकत देगा
   push:
-    branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
+    branches: [ "main" ]
 
 jobs:
-  build:
-    name: Build Production Worker APK
+  hunt-errors:
+    name: 🔍 Hunting for Real Errors
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: 📥 Clone Repository
+        uses: actions/checkout@v3
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - name: ☕ Setup Java 17
+        uses: actions/setup-java@v3
         with:
-          java-version: '17'
           distribution: 'temurin'
+          java-version: '17'
 
-      # ARCHITECTURE UPDATE: Upgraded to v4 for faster caching & Node 20 support
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: 🔨 Grant Execute Permission to Gradle
+        run: chmod +x ./gradlew
+
+      - name: 🕵️‍♂️ Run Silent Build & Capture Everything
+        # हम जानबूझकर बिल्ड फेल होने पर भी स्क्रिप्ट को रुकने नहीं देंगे (|| true) 
+        # ताकि हम लॉग्स को स्कैन कर सकें।
+        run: |
+          echo "Spy Agent is running the build in stealth mode..."
+          ./gradlew assembleDebug --stacktrace > full_build_log.txt 2>&1 || echo "Build stopped. Time to scan logs!"
+
+      - name: 🚨 Extract Real Errors (The Magic)
+        # यह स्टेप 10,000 लाइनों में से सिर्फ असली एरर छाँट कर निकालेगा
+        run: |
+          echo "### 🕵️‍♂️ Spy Agent Error Report" >> $GITHUB_STEP_SUMMARY
+          echo "मुझे तुम्हारे कोड में ये असली मुजरिम मिले हैं:" >> $GITHUB_STEP_SUMMARY
+          echo '```text' >> $GITHUB_STEP_SUMMARY
+          
+          # 1. Kotlin Syntax Errors (e: वाली लाइनें) पकड़ो
+          grep -E "^e: " full_build_log.txt >> $GITHUB_STEP_SUMMARY || true
+          
+          # 2. AAPT / Resource Errors (XML, Mipmap) पकड़ो
+          grep -A 3 -i "AAPT: error:" full_build_log.txt >> $GITHUB_STEP_SUMMARY || true
+          
+          # 3. Main Task Failure (किस वजह से बिल्ड रुका) पकड़ो
+          grep -E "Execution failed for task" full_build_log.txt >> $GITHUB_STEP_SUMMARY || true
+          
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: 📤 Upload Full Log (Backup)
+        uses: actions/upload-artifact@v3
         with:
-          gradle-version: "8.2"
-
-      # Added --info flag for deep logging
-      - name: Compile and Assemble APK
-        run: gradle assembleDebug --stacktrace --info --no-daemon
-
-      # 🚨 NEW EMERGENCY PROTOCOL: Catching the exact error if AAPT2 or Kotlin fails
-      - name: Upload Build Reports (On Failure)
-        uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: build-failure-reports
-          path: app/build/reports/
-          retention-days: 3
-
-      - name: Upload Finished Artifact
-        uses: actions/upload-artifact@v4
-        if: success()
-        with:
-          name: kall-worker-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-          retention-days: 5
+          name: Spy-Complete-Log
+          path: full_build_log.txt
