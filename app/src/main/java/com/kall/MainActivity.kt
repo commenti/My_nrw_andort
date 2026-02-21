@@ -62,7 +62,9 @@ class MainActivity : AppCompatActivity() {
     private fun requestBatteryExemption() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            val packageName = packageName
+            
+            // FIX: Removed the invalid `val packageName = packageName` line.
+            // We can just use the inherited `packageName` property directly below.
             if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
                 Log.i(TAG, "BATTERY: Requesting exemption from Doze mode.")
                 val intent = Intent().apply {
