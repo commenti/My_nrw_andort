@@ -5,12 +5,10 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.postgresChangeFlow
-import io.github.jan.supabase.realtime.realtime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,17 +18,20 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.jsonPrimitive
 
+// Polling के लिए decodeList का इम्पोर्ट
+import io.github.jan.supabase.postgrest.query.columns.decodeList
+
 /**
  * ARCHITECTURE CONTRACT: SupabaseManager (The Nervous System)
- * Version: 2.5 (Final Compilation Fix - Polling Logic Refactored)
+ * Version: 2.6 (Syntax Fixed for Supabase-kt 2.0.0 API Builder Pattern)
  */
 object SupabaseManager {
 
     private const val TAG = "Kall_NervousSystem"
-    [span_5](start_span)private const val TABLE_QUEUE = "ai_tasks"[span_5](end_span)
+    private const val TABLE_QUEUE = "ai_tasks"
 
-    [span_6](start_span)[span_7](start_span)private const val SUPABASE_URL = "https://aeopowovqksexgvseiyq.supabase.co"[span_6](end_span)[span_7](end_span)
-    [span_8](start_span)[span_9](start_span)private const val SUPABASE_KEY = "sb_publishable_HX5GTYwHATs3gTksy-ZV9w_AQNIfM7t"[span_8](end_span)[span_9](end_span)
+    private const val SUPABASE_URL = "https://aeopowovqksexgvseiyq.supabase.co"
+    private const val SUPABASE_KEY = "sb_publishable_HX5GTYwHATs3gTksy-ZV9w_AQNIfM7t"
 
     private lateinit var client: SupabaseClient
     private val networkScope = CoroutineScope(Dispatchers.IO + Job())
@@ -86,13 +87,11 @@ object SupabaseManager {
             launch {
                 while(true) {
                     try {
-                        // Polling: Manually fetch pending tasks if WebSocket drops
-                        val response = client.postgrest[TABLE_QUEUE]
-                            .select(Columns.ALL) {
+                        // FIX 1: New select syntax without Columns.ALL
+                        val pendingTasks = client.postgrest[TABLE_QUEUE]
+                            .select {
                                 filter { eq("status", "pending") }
-                            }
-                        
-                        val pendingTasks = response.decodeList<InteractionTask>()
+                            }.decodeList<InteractionTask>()
 
                         if (pendingTasks.isNotEmpty()) {
                             Log.i(TAG, "POLLING: Found ${pendingTasks.size} tasks. Processing first...")
@@ -117,9 +116,12 @@ object SupabaseManager {
 
     private suspend fun lockTask(taskId: String): Boolean {
         return try {
-            client.postgrest[TABLE_QUEUE].update({
-                set("status", "processing")
-            }) {
+            // FIX 2: Explicitly named 'update =' for 2.0.0 lambda syntax
+            client.postgrest[TABLE_QUEUE].update(
+                update = {
+                    set("status", "processing")
+                }
+            ) {
                 filter {
                     eq("id", taskId)
                     eq("status", "pending")
@@ -135,10 +137,13 @@ object SupabaseManager {
     fun updateTaskAndAcknowledge(task: InteractionTask) {
         networkScope.launch {
             try {
-                client.postgrest[TABLE_QUEUE].update({
-                    set("response", task.response)
-                    set("status", task.status)
-                }) {
+                // FIX 3: Explicitly named 'update =' for 2.0.0 lambda syntax
+                client.postgrest[TABLE_QUEUE].update(
+                    update = {
+                        set("response", task.response)
+                        set("status", task.status)
+                    }
+                ) {
                     filter { eq("id", task.id) }
                 }
                 Log.i(TAG, "SUCCESS: Task ${task.id} finalized.")
