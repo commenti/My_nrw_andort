@@ -18,7 +18,7 @@ import androidx.appcompat.app.AppCompatActivity
  * ARCHITECTURE CONTRACT: MainActivity.kt
  * Role: The Executor (Headless WebView & State Machine).
  * Logic: Receives Task -> Injects JS -> Observes DOM -> Returns Result.
- * UPDATE: Added Cookie Persistence & Background Service logic.
+ * UPDATE: Removed Desktop UserAgent for perfect Mobile Responsive UI.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -35,18 +35,18 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Rule 1: CPU aur Screen ko sone nahi dena (Worker stability)
+        // Rule 1: CPU aur Screen ko sone nahi dena
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        // CRITICAL UPDATE: Start Background Service for Android 14/15
+        // Rule 2: Start Background Service for Android 14/15
         startWorkerService()
 
         setupHeadlessWebView()
         
-        // Rule 2: Zero XML. Direct view attachment.
+        // Rule 3: Zero XML. Direct view attachment.
         setContentView(webView)
 
-        // Rule 3: Nervous System (Supabase) connection start karo
+        // Rule 4: Nervous System (Supabase) connection start
         Log.d(TAG, "BOOT: Initializing Network Handshake...")
         SupabaseManager.initializeNetworkListener(this::onNewTaskReceived)
     }
@@ -66,24 +66,20 @@ class MainActivity : AppCompatActivity() {
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 databaseEnabled = true
-                userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                // 🚨 CRITICAL FIX: Desktop UserAgent has been removed.
+                // Now Qwen will load in its native Mobile-Responsive layout.
             }
 
-            // CRITICAL UPDATE: SESSION PERSISTENCE (कुकीज हमेशा के लिए सेव करें)
             val cookieManager = CookieManager.getInstance()
             cookieManager.setAcceptCookie(true)
             cookieManager.setAcceptThirdPartyCookies(this, true)
 
-            // JavaScript <-> Kotlin Bridge
             addJavascriptInterface(NeuroBridge(), "AndroidBridge")
 
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    
-                    // Force save cookies to disk immediately
                     CookieManager.getInstance().flush()
-                    
                     isPageLoaded = true
                     Log.i(TAG, "STATE: Engine Ready. Page Fully Loaded.")
                     
@@ -103,7 +99,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-
         webView.loadUrl(TARGET_URL)
     }
 
