@@ -1,7 +1,7 @@
 package com.kall
 
 import android.annotation.SuppressLint
-import android.content.Context // 🚨 FIX: Context Import Added
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -18,12 +18,6 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 
-/**
- * ARCHITECTURE CONTRACT: MainActivity.kt
- * Role: The Executor (Headless WebView & State Machine).
- * Logic: Receives Task -> Injects JS -> Observes DOM -> Returns Result.
- * UPDATE: Fixed 'Break' syntax error & Added Immortality Protocols.
- */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
@@ -32,29 +26,20 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "Kall_Muscle"
-        private const val TARGET_URL = "https://chat.qwen.ai/" 
+        private const val TARGET_URL = "https://chat.qwen.ai/"
     }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Rule 1: CPU और स्क्रीन को जागृत रखें
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
-        // 🚨 IMMORTALITY HACK: बैटरी ऑप्टिमाइज़ेशन से ऐप को बाहर निकालना
-        requestBatteryExemption()
-
-        // Rule 2: Android 14/15 बैकग्राउंड सर्विस
-        startWorkerService()
-
-        setupHeadlessWebView()
         
-        // Rule 3: डायरेक्ट व्यू अटैचमेंट
+        requestBatteryExemption()
+        startWorkerService()
+        setupHeadlessWebView()
         setContentView(webView)
-
-        // Rule 4: Supabase नेटवर्क लिसनर
-        Log.d(TAG, "BOOT: Initializing Network Handshake...")
+        
+        Log.d(TAG, "BOOT: Network Init...")
         SupabaseManager.initializeNetworkListener(this::onNewTaskReceived)
     }
 
@@ -63,14 +48,13 @@ class MainActivity : AppCompatActivity() {
             try {
                 val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
                 if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-                    Log.w(TAG, "BATTERY: Requesting exemption to prevent deep sleep.")
-                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                        data = Uri.parse("package:$packageName")
-                    }
+                    Log.w(TAG, "BATTERY: Requesting exemption.")
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    intent.data = Uri.parse("package:$packageName")
                     startActivity(intent)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "BATTERY ERROR: ${e.message}")
+                Log.e(TAG, "BATTERY ERROR.")
             }
         }
     }
@@ -86,14 +70,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupHeadlessWebView() {
         webView = WebView(this).apply {
-            settings.apply {
-                javaScriptEnabled = true
-                domStorageEnabled = true
-                databaseEnabled = true
-                
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    offscreenPreRaster = true 
-                }
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.databaseEnabled = true
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                settings.offscreenPreRaster = true
             }
 
             val cookieManager = CookieManager.getInstance()
@@ -107,16 +89,16 @@ class MainActivity : AppCompatActivity() {
                     super.onPageFinished(view, url)
                     CookieManager.getInstance().flush()
                     isPageLoaded = true
-                    Log.i(TAG, "STATE: Engine Ready. Page Fully Loaded.")
-                    
-                    currentTask?.let { 
-                        Log.i(TAG, "STATE: Executing buffered task ${it.id}")
-                        executeTask(it) 
-                    }
+                    Log.i(TAG, "STATE: Page Loaded.")
+                    currentTask?.let { executeTask(it) }
                 }
 
-                override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
-                    Log.e(TAG, "NETWORK ERROR: ${error?.description}. Attempting reload.")
+                override fun onReceivedError(
+                    view: WebView?, 
+                    request: WebResourceRequest?, 
+                    error: WebResourceError?
+                ) {
+                    Log.e(TAG, "NETWORK ERROR. Reloading.")
                     triggerSelfHealingProtocol()
                 }
             }
@@ -126,38 +108,34 @@ class MainActivity : AppCompatActivity() {
 
     fun onNewTaskReceived(task: InteractionTask) {
         runOnUiThread {
-            Log.i(TAG, "SIGNAL: New Task ${task.id} incoming.")
+            Log.i(TAG, "SIGNAL: New Task.")
             currentTask = task
             if (isPageLoaded) {
                 executeTask(task)
-            } else {
-                Log.w(TAG, "BUFFER: Page load pending. Task ${task.id} queued.")
             }
         }
     }
 
     private fun executeTask(task: InteractionTask) {
-        Log.i(TAG, "ACTION: Dispatching Payload for Task ${task.id}")
+        Log.i(TAG, "ACTION: Dispatching Payload.")
         val script = JsInjector.buildDispatchScript(task.prompt)
         webView.evaluateJavascript(script, null)
     }
 
     private fun triggerSelfHealingProtocol() {
-        Log.w(TAG, "HEAL: WebView unstable. Reloading in 3s...")
-        
+        Log.w(TAG, "HEAL: Reloading in 3s...")
         currentTask?.let {
-            val failedTask = it.copy(response = "SYSTEM_ERROR: UI failure caused reload.", status = "failed")
+            val failedTask = it.copy(response = "SYSTEM_ERROR", status = "failed")
             SupabaseManager.updateTaskAndAcknowledge(failedTask)
         }
-        currentTask = null 
-        
+        currentTask = null
         isPageLoaded = false
         webView.postDelayed({ webView.reload() }, 3000)
     }
 
     override fun onPause() {
         super.onPause()
-        webView.resumeTimers() 
+        webView.resumeTimers()
     }
 
     override fun onStop() {
@@ -166,15 +144,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     inner class NeuroBridge {
-        
         @JavascriptInterface
         fun onChunkProgress(currentChunk: Int, totalChunks: Int) {
-            Log.i(TAG, "JS: Injecting chunk $currentChunk of $totalChunks...")
+            Log.i(TAG, "JS: Chunk $currentChunk of $totalChunks")
         }
 
         @JavascriptInterface
         fun onInjectionSuccess(message: String) {
-            Log.i(TAG, "JS: Payload dispatched. Starting Harvester...")
+            Log.i(TAG, "JS: Injection Success.")
             runOnUiThread {
                 webView.evaluateJavascript(JsInjector.HARVESTER_SCRIPT, null)
             }
@@ -182,12 +159,11 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun onResponseHarvested(response: String) {
-            Log.i(TAG, "JS: Harvesting Complete.")
+            Log.i(TAG, "JS: Harvest Complete.")
             runOnUiThread {
                 currentTask?.let {
                     val completedTask = it.copy(response = response, status = "completed")
                     SupabaseManager.updateTaskAndAcknowledge(completedTask)
-                    Log.i(TAG, "FINISH: Task ${it.id} processed.")
                 }
                 currentTask = null
             }
@@ -195,10 +171,10 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun onError(errorMessage: String) {
-            Log.e(TAG, "JS ERROR: $errorMessage")
+            Log.e(TAG, "JS ERROR.")
             runOnUiThread {
                 currentTask?.let {
-                    val failedTask = it.copy(response = errorMessage, status = "failed")
+                    val failedTask = it.copy(response = "JS_ERROR", status = "failed")
                     SupabaseManager.updateTaskAndAcknowledge(failedTask)
                 }
                 currentTask = null
