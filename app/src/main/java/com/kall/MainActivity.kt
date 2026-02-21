@@ -1,4 +1,4 @@
-package com.kall
+package com.kall // 🚨 FIX: 'P' को छोटा कर दिया गया है!
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -23,7 +23,7 @@ import java.lang.ref.WeakReference // 🚨 NEW: Memory Leak रोकने क�
  * ARCHITECTURE CONTRACT: MainActivity.kt
  * Role: The Executor (Headless WebView & State Machine).
  * Logic: Receives Task -> Injects JS -> Observes DOM -> Returns Result.
- * UPDATE: Memory Leak Fixed (WeakReference for NeuroBridge) based on Security Audit.
+ * UPDATE: Added Boot Immortality Script injection to prevent network sleep.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -97,6 +97,10 @@ class MainActivity : AppCompatActivity() {
                     super.onPageFinished(view, url)
                     CookieManager.getInstance().flush()
                     isPageLoaded = true
+                    
+                    // 🚨 NEW HACK: पेज लोड होते ही ऐप को अमर और नेटवर्क को एक्टिव करने वाली स्क्रिप्ट चलाएं
+                    view?.evaluateJavascript(JsInjector.BOOT_IMMORTALITY_SCRIPT, null)
+
                     Log.i(TAG, "STATE: Engine Ready. Page Fully Loaded.")
                     currentTask?.let { executeTask(it) }
                 }
