@@ -1,6 +1,7 @@
 package com.kall
 
 import android.annotation.SuppressLint
+import android.content.Context // 🚨 FIX: Missing Import Added
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -21,7 +22,7 @@ import androidx.appcompat.app.AppCompatActivity
  * ARCHITECTURE CONTRACT: MainActivity.kt
  * Role: The Executor (Headless WebView & State Machine).
  * Logic: Receives Task -> Injects JS -> Observes DOM -> Returns Result.
- * UPDATE: Added "Immortality Protocol" - Battery Exemption & Web Audio Hack Integration.
+ * UPDATE: Added "Immortality Protocol" - Battery Exemption & Web Audio Hack Integration (Compilation Fixed).
  */
 class MainActivity : AppCompatActivity() {
 
@@ -60,7 +61,8 @@ class MainActivity : AppCompatActivity() {
     // यह फंक्शन OS को ऐप मारने से रोकेगा (Battery Bypass)
     private fun requestBatteryExemption() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            // 🚨 FIX: Added Context.POWER_SERVICE so compiler knows where to find it
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             if (!pm.isIgnoringBatteryOptimizations(packageName)) {
                 Log.w(TAG, "BATTERY: Requesting exemption to prevent deep sleep.")
                 val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
