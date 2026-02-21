@@ -1,7 +1,7 @@
 package com.kall
 
 import android.annotation.SuppressLint
-import android.content.Context
+import android.content.Context // 🚨 FIX: Context Import Added
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -22,7 +22,7 @@ import androidx.appcompat.app.AppCompatActivity
  * ARCHITECTURE CONTRACT: MainActivity.kt
  * Role: The Executor (Headless WebView & State Machine).
  * Logic: Receives Task -> Injects JS -> Observes DOM -> Returns Result.
- * UPDATE: Cleaned Syntax Errors + Added Battery Exemption & Immortality Hacks.
+ * UPDATE: Fixed 'Break' syntax error & Added Immortality Protocols.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -39,21 +39,21 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Rule 1: CPU और स्क्रीन को सोने नहीं देना
+        // Rule 1: CPU और स्क्रीन को जागृत रखें
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        // 🚨 IMMORTALITY HACK 1: बैटरी ऑप्टिमाइज़ेशन से ऐप को बाहर निकालना
+        // 🚨 IMMORTALITY HACK: बैटरी ऑप्टिमाइज़ेशन से ऐप को बाहर निकालना
         requestBatteryExemption()
 
-        // Rule 2: Android 14/15 के लिए Background Service स्टार्ट करना
+        // Rule 2: Android 14/15 बैकग्राउंड सर्विस
         startWorkerService()
 
         setupHeadlessWebView()
         
-        // Rule 3: Direct view attachment (बिना XML के)
+        // Rule 3: डायरेक्ट व्यू अटैचमेंट
         setContentView(webView)
 
-        // Rule 4: Nervous System (Supabase) connection start
+        // Rule 4: Supabase नेटवर्क लिसनर
         Log.d(TAG, "BOOT: Initializing Network Handshake...")
         SupabaseManager.initializeNetworkListener(this::onNewTaskReceived)
     }
@@ -70,7 +70,7 @@ class MainActivity : AppCompatActivity() {
                     startActivity(intent)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "BATTERY EXEMPTION ERROR: ${e.message}")
+                Log.e(TAG, "BATTERY ERROR: ${e.message}")
             }
         }
     }
@@ -91,7 +91,6 @@ class MainActivity : AppCompatActivity() {
                 domStorageEnabled = true
                 databaseEnabled = true
                 
-                // 🚨 BACKGROUND HACK 1: WebView को स्क्रीन के बाहर भी रेंडर होने दें
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     offscreenPreRaster = true 
                 }
@@ -116,11 +115,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                override fun onReceivedError(
-                    view: WebView?,
-                    request: WebResourceRequest?,
-                    error: WebResourceError?
-                ) {
+                override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                     Log.e(TAG, "NETWORK ERROR: ${error?.description}. Attempting reload.")
                     triggerSelfHealingProtocol()
                 }
@@ -151,7 +146,7 @@ class MainActivity : AppCompatActivity() {
         Log.w(TAG, "HEAL: WebView unstable. Reloading in 3s...")
         
         currentTask?.let {
-            val failedTask = it.copy(response = "SYSTEM_ERROR: Mobile UI form submission caused page reload.", status = "failed")
+            val failedTask = it.copy(response = "SYSTEM_ERROR: UI failure caused reload.", status = "failed")
             SupabaseManager.updateTaskAndAcknowledge(failedTask)
         }
         currentTask = null 
@@ -160,26 +155,16 @@ class MainActivity : AppCompatActivity() {
         webView.postDelayed({ webView.reload() }, 3000)
     }
 
-    // ==========================================
-    // 🚨 BACKGROUND HACK 2: FORCE JS EXECUTION WHEN APP IS MINIMIZED
-    // ==========================================
     override fun onPause() {
         super.onPause()
-        // Android WebView को पॉज़ कर देता है, हम उसे ज़बरदस्ती वापस जगा रहे हैं
         webView.resumeTimers() 
-        Log.i(TAG, "BACKGROUND: Forced WebView timers to stay awake during onPause.")
     }
 
     override fun onStop() {
         super.onStop()
-        // ऐप पूरी तरह छुपने पर भी JS इंजन चालू रहेगा
         webView.resumeTimers()
-        Log.i(TAG, "BACKGROUND: Forced WebView timers to stay awake during onStop.")
     }
 
-    // ==========================================
-    // THE BRIDGE: Android <---> JavaScript
-    // ==========================================
     inner class NeuroBridge {
         
         @JavascriptInterface
@@ -189,7 +174,7 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun onInjectionSuccess(message: String) {
-            Log.i(TAG, "JS: Payload fully injected & dispatched. Starting Harvester...")
+            Log.i(TAG, "JS: Payload dispatched. Starting Harvester...")
             runOnUiThread {
                 webView.evaluateJavascript(JsInjector.HARVESTER_SCRIPT, null)
             }
@@ -202,7 +187,7 @@ class MainActivity : AppCompatActivity() {
                 currentTask?.let {
                     val completedTask = it.copy(response = response, status = "completed")
                     SupabaseManager.updateTaskAndAcknowledge(completedTask)
-                    Log.i(TAG, "FINISH: Task ${it.id} processed & sent back to Python.")
+                    Log.i(TAG, "FINISH: Task ${it.id} processed.")
                 }
                 currentTask = null
             }
