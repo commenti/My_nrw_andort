@@ -43,18 +43,25 @@ object JsInjector {
                         return;
                     }
                     
-                    // 🚨 HACKER FIX 1: Native Typing Simulation
-                    inputEl.value = ''; // Clear existing
-                    inputEl.focus();
-                    document.execCommand('insertText', false, "$safePrompt");
+                    // 🚨 HACKER FIX 1: Bulletproof Injection (No weird symbols)
+                    if (inputEl.tagName.toLowerCase() === 'textarea') {
+                        // React Native Setter for Textareas
+                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+                        nativeInputValueSetter.call(inputEl, "$safePrompt");
+                    } else {
+                        // Safe injection for ContentEditable Divs (Mobile UI)
+                        inputEl.innerHTML = "$safePrompt";
+                        inputEl.textContent = "$safePrompt"; 
+                    }
+                    
+                    // Trigger events so the Send button lights up
+                    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+                    inputEl.dispatchEvent(new Event('change', { bubbles: true }));
                     
                     setTimeout(() => {
-                        // 🚨 HACKER FIX 2: Dynamic Button Mapping (Like a hacker)
-                        // Qwen मोबाइल पर सेंड बटन अक्सर एक SVG आइकॉन होता है जो टाइप करने के बाद एक्टिव होता है।
                         let possibleBtns = Array.from(document.querySelectorAll('button')).filter(b => !b.disabled && b.querySelector('svg'));
-                        
                         let sendBtn = document.querySelector('button[aria-label*="send" i], button[data-testid*="send" i], button.send-btn') 
-                                      || possibleBtns[possibleBtns.length - 1]; // Fallback: Last active button with an icon
+                                      || possibleBtns[possibleBtns.length - 1]; 
                         
                         if (sendBtn) {
                             sendBtn.click();
@@ -62,7 +69,7 @@ object JsInjector {
                         } else {
                             window.AndroidBridge.onError('DOM_ERROR: Send button completely hidden');
                         }
-                    }, 1000); // 1-second delay to let Qwen UI animations finish
+                    }, 1000); 
                 } catch (e) {
                     window.AndroidBridge.onError('EXECUTION_ERROR: ' + e.message);
                 }
@@ -79,20 +86,25 @@ object JsInjector {
             
             window.activeHarvester = setInterval(() => {
                 try {
-                    const isTyping = document.querySelector('button[aria-label*="Stop"], .typing-indicator') !== null;
-                    const responseBlocks = document.querySelectorAll('.markdown-body, .prose, .message-content, .qwen-ui-message');
-                    if (responseBlocks.length === 0) return;
+                    const isTyping = document.querySelector('button[aria-label*="Stop"], .typing-indicator, [class*="typing"]') !== null;
+                    
+                    // 🚨 HACKER FIX 2: Broader Mobile CSS Selectors
+                    // यह अब मोबाइल UI के हर तरह के रिस्पॉन्स बॉक्स को पढ़ लेगा
+                    const responseBlocks = document.querySelectorAll('.markdown-body, .prose, .message-content, .qwen-ui-message, div[data-message-author="assistant"], div[class*="content"]');
+                    
+                    if (responseBlocks.length === 0) return; // Wait until response UI appears
                     
                     const latestResponse = responseBlocks[responseBlocks.length - 1].innerText;
                     
-                    if (!isTyping) {
-                        if (latestResponse === lastContent && latestResponse.trim().length > 0) {
+                    if (!isTyping && latestResponse.trim().length > 0) {
+                        if (latestResponse === lastContent) {
                             stabilityCounter++;
                         } else {
                             stabilityCounter = 0;
                             lastContent = latestResponse;
                         }
                         
+                        // 3 सेकंड तक जवाब न बदले, तो उसे फाइनल मान लो
                         if (stabilityCounter >= 3) {
                             clearInterval(window.activeHarvester);
                             window.activeHarvester = null;
