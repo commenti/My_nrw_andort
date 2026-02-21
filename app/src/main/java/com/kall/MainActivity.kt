@@ -18,7 +18,7 @@ import androidx.appcompat.app.AppCompatActivity
  * ARCHITECTURE CONTRACT: MainActivity.kt
  * Role: The Executor (Headless WebView & State Machine).
  * Logic: Receives Task -> Injects JS -> Observes DOM -> Returns Result.
- * UPDATE: Added Chunking Support & Lowercase Status ('completed' / 'failed') for Python CLI.
+ * UPDATE: Added Background-Execution Hacks (Offscreen Raster & Timer Forcing) + Chunking Support.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -66,7 +66,11 @@ class MainActivity : AppCompatActivity() {
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 databaseEnabled = true
-                // Desktop UserAgent हटा दिया गया है ताकि Mobile Responsive UI न टूटे
+                
+                // 🚨 BACKGROUND HACK 1: WebView को स्क्रीन के बाहर भी रेंडर होने दें
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    offscreenPreRaster = true 
+                }
             }
 
             val cookieManager = CookieManager.getInstance()
@@ -122,7 +126,6 @@ class MainActivity : AppCompatActivity() {
     private fun triggerSelfHealingProtocol() {
         Log.w(TAG, "HEAL: WebView unstable. Reloading in 3s...")
         
-        // 🚨 PYTHON CLI FIX: Status updated to 'failed' (छोटे अक्षरों में)
         currentTask?.let {
             val failedTask = it.copy(response = "SYSTEM_ERROR: Mobile UI form submission caused page reload.", status = "failed")
             SupabaseManager.updateTaskAndAcknowledge(failedTask)
@@ -134,11 +137,27 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ==========================================
+    // 🚨 BACKGROUND HACK 2: FORCE JS EXECUTION WHEN APP IS MINIMIZED
+    // ==========================================
+    override fun onPause() {
+        super.onPause()
+        // Android WebView को पॉज़ कर देता है, हम उसे ज़बरदस्ती वापस जगा रहे हैं
+        webView.resumeTimers() 
+        Log.i(TAG, "BACKGROUND: Forced WebView timers to stay awake during onPause.")
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // ऐप पूरी तरह छुपने पर भी JS इंजन चालू रहेगा
+        webView.resumeTimers()
+        Log.i(TAG, "BACKGROUND: Forced WebView timers to stay awake during onStop.")
+    }
+
+    // ==========================================
     // THE BRIDGE: Android <---> JavaScript
     // ==========================================
     inner class NeuroBridge {
         
-        // 🚨 NEW: भारी डेटा (Python Context) को ट्रैक करने के लिए Chunk Observer
         @JavascriptInterface
         fun onChunkProgress(currentChunk: Int, totalChunks: Int) {
             Log.i(TAG, "JS: Injecting chunk $currentChunk of $totalChunks...")
@@ -157,7 +176,6 @@ class MainActivity : AppCompatActivity() {
             Log.i(TAG, "JS: Harvesting Complete.")
             runOnUiThread {
                 currentTask?.let {
-                    // 🚨 PYTHON CLI FIX: Status strictly 'completed' (छोटे अक्षरों में)
                     val completedTask = it.copy(response = response, status = "completed")
                     SupabaseManager.updateTaskAndAcknowledge(completedTask)
                     Log.i(TAG, "FINISH: Task ${it.id} processed & sent back to Python.")
@@ -171,7 +189,6 @@ class MainActivity : AppCompatActivity() {
             Log.e(TAG, "JS ERROR: $errorMessage")
             runOnUiThread {
                 currentTask?.let {
-                    // 🚨 PYTHON CLI FIX: Status strictly 'failed' (छोटे अक्षरों में)
                     val failedTask = it.copy(response = errorMessage, status = "failed")
                     SupabaseManager.updateTaskAndAcknowledge(failedTask)
                 }
