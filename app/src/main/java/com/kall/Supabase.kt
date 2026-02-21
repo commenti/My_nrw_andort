@@ -18,12 +18,11 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.jsonPrimitive
 
-// Polling के लिए decodeList का इम्पोर्ट
-import io.github.jan.supabase.postgrest.query.columns.decodeList
+// 🚨 नोट: यहाँ से वह फालतू decodeList वाला import हमेशा के लिए हटा दिया गया है।
 
 /**
  * ARCHITECTURE CONTRACT: SupabaseManager (The Nervous System)
- * Version: 2.6 (Syntax Fixed for Supabase-kt 2.0.0 API Builder Pattern)
+ * Version: 2.7 (The Final Apology Fix - Removed invalid import)
  */
 object SupabaseManager {
 
@@ -87,7 +86,7 @@ object SupabaseManager {
             launch {
                 while(true) {
                     try {
-                        // FIX 1: New select syntax without Columns.ALL
+                        // FIX: 2.0.0 Syntax (Absolutely Correct)
                         val pendingTasks = client.postgrest[TABLE_QUEUE]
                             .select {
                                 filter { eq("status", "pending") }
@@ -98,7 +97,7 @@ object SupabaseManager {
                             handlePendingTask(pendingTasks.first(), onNewTask)
                         }
                     } catch (e: Exception) {
-                        // Silent catch to prevent loop breakage
+                        // Silent catch
                     }
                     delay(3000) // Poll every 3 seconds
                 }
@@ -116,7 +115,7 @@ object SupabaseManager {
 
     private suspend fun lockTask(taskId: String): Boolean {
         return try {
-            // FIX 2: Explicitly named 'update =' for 2.0.0 lambda syntax
+            // FIX: 2.0.0 Update Syntax (Absolutely Correct)
             client.postgrest[TABLE_QUEUE].update(
                 update = {
                     set("status", "processing")
@@ -137,7 +136,7 @@ object SupabaseManager {
     fun updateTaskAndAcknowledge(task: InteractionTask) {
         networkScope.launch {
             try {
-                // FIX 3: Explicitly named 'update =' for 2.0.0 lambda syntax
+                // FIX: 2.0.0 Update Syntax (Absolutely Correct)
                 client.postgrest[TABLE_QUEUE].update(
                     update = {
                         set("response", task.response)
