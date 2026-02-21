@@ -37,40 +37,32 @@ object JsInjector {
         return """
             (function() {
                 try {
-                    // 1. Smart Selector: Textarea या ContentEditable Div ढूँढो (Mobile Layout Support)
                     let inputEl = document.querySelector('textarea') || document.querySelector('[contenteditable="true"]');
                     if (!inputEl) {
-                        window.AndroidBridge.onError('DOM_ERROR: Input box not found on this mobile layout');
+                        window.AndroidBridge.onError('DOM_ERROR: Input box not found');
                         return;
                     }
                     
-                    // 2. Text Inject करो
-                    if (inputEl.tagName.toLowerCase() === 'textarea') {
-                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-                        nativeInputValueSetter.call(inputEl, "$safePrompt");
-                    } else {
-                        inputEl.innerText = "$safePrompt";
-                    }
+                    // 🚨 HACKER FIX 1: Native Typing Simulation
+                    inputEl.value = ''; // Clear existing
+                    inputEl.focus();
+                    document.execCommand('insertText', false, "$safePrompt");
                     
-                    // 3. Framework को बताओ कि टाइपिंग हुई है
-                    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-                    inputEl.dispatchEvent(new Event('change', { bubbles: true }));
-                    
-                    // 4. Send Button दबाओ या Enter मारो (Fallback)
                     setTimeout(() => {
-                        const sendBtn = document.querySelector('button[type="submit"], button[aria-label*="end"], button[data-testid*="send"], .ant-btn-primary');
-                        if (sendBtn && !sendBtn.disabled) {
+                        // 🚨 HACKER FIX 2: Dynamic Button Mapping (Like a hacker)
+                        // Qwen मोबाइल पर सेंड बटन अक्सर एक SVG आइकॉन होता है जो टाइप करने के बाद एक्टिव होता है।
+                        let possibleBtns = Array.from(document.querySelectorAll('button')).filter(b => !b.disabled && b.querySelector('svg'));
+                        
+                        let sendBtn = document.querySelector('button[aria-label*="send" i], button[data-testid*="send" i], button.send-btn') 
+                                      || possibleBtns[possibleBtns.length - 1]; // Fallback: Last active button with an icon
+                        
+                        if (sendBtn) {
                             sendBtn.click();
-                            window.AndroidBridge.onInjectionSuccess('SUCCESS: Payload dispatched via Click');
+                            window.AndroidBridge.onInjectionSuccess('SUCCESS: Payload clicked dynamically');
                         } else {
-                            // Fallback: अगर सेंड बटन न मिले, तो Enter की दबा दो
-                            const enterEvent = new KeyboardEvent('keydown', {
-                                bubbles: true, cancelable: true, keyCode: 13, key: 'Enter'
-                            });
-                            inputEl.dispatchEvent(enterEvent);
-                            window.AndroidBridge.onInjectionSuccess('SUCCESS: Payload dispatched via Enter');
+                            window.AndroidBridge.onError('DOM_ERROR: Send button completely hidden');
                         }
-                    }, 800);
+                    }, 1000); // 1-second delay to let Qwen UI animations finish
                 } catch (e) {
                     window.AndroidBridge.onError('EXECUTION_ERROR: ' + e.message);
                 }
@@ -80,9 +72,7 @@ object JsInjector {
 
     val HARVESTER_SCRIPT = """
         (function() {
-            if (window.activeHarvester) {
-                clearInterval(window.activeHarvester);
-            }
+            if (window.activeHarvester) clearInterval(window.activeHarvester);
             
             let lastContent = '';
             let stabilityCounter = 0;
@@ -120,4 +110,3 @@ object JsInjector {
         })();
     """.trimIndent()
 }
-
