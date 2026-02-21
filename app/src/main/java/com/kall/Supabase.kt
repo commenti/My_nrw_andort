@@ -18,11 +18,9 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.jsonPrimitive
 
-// 🚨 नोट: यहाँ से वह फालतू decodeList वाला import हमेशा के लिए हटा दिया गया है।
-
 /**
  * ARCHITECTURE CONTRACT: SupabaseManager (The Nervous System)
- * Version: 2.7 (The Final Apology Fix - Removed invalid import)
+ * Version: 2.8 (Restored ORIGINAL perfectly working update syntax)
  */
 object SupabaseManager {
 
@@ -57,7 +55,9 @@ object SupabaseManager {
                     Log.i(TAG, "REALTIME: WebSocket Secure Connected.")
                     
                     val channel = client.realtime.channel("public-ai-tasks")
-                    val changeFlow = channel.postgresChangeFlow<PostgresAction.Insert>(schema = "public") {
+                    val changeFlow = channel.postgresChangeFlow<PostgresAction.Insert>(
+                        schema = "public"
+                    ) {
                         table = TABLE_QUEUE
                     }
 
@@ -70,7 +70,11 @@ object SupabaseManager {
                                 prompt = record["prompt"]?.jsonPrimitive?.content ?: "",
                                 status = "pending"
                             )
-                            handlePendingTask(task, onNewTask)
+                            if (task.id.isNotEmpty()) {
+                                if (lockTask(task.id)) {
+                                    onNewTask(task)
+                                }
+                            }
                         }
                     }.launchIn(this)
 
@@ -86,18 +90,23 @@ object SupabaseManager {
             launch {
                 while(true) {
                     try {
-                        // FIX: 2.0.0 Syntax (Absolutely Correct)
-                        val pendingTasks = client.postgrest[TABLE_QUEUE]
-                            .select {
-                                filter { eq("status", "pending") }
-                            }.decodeList<InteractionTask>()
+                        // Polling with exact simple syntax
+                        val response = client.postgrest[TABLE_QUEUE].select {
+                            filter { eq("status", "pending") }
+                        }
+                        
+                        val pendingTasks = response.decodeList<InteractionTask>()
 
                         if (pendingTasks.isNotEmpty()) {
-                            Log.i(TAG, "POLLING: Found ${pendingTasks.size} tasks. Processing first...")
-                            handlePendingTask(pendingTasks.first(), onNewTask)
+                            val task = pendingTasks.first()
+                            if (task.id.isNotEmpty()) {
+                                if (lockTask(task.id)) {
+                                    onNewTask(task)
+                                }
+                            }
                         }
                     } catch (e: Exception) {
-                        // Silent catch
+                        // Silent catch to keep loop alive
                     }
                     delay(3000) // Poll every 3 seconds
                 }
@@ -105,22 +114,12 @@ object SupabaseManager {
         }
     }
 
-    private suspend fun handlePendingTask(task: InteractionTask, onNewTask: (InteractionTask) -> Unit) {
-        if (task.id.isNotEmpty()) {
-            if (lockTask(task.id)) {
-                onNewTask(task)
-            }
-        }
-    }
-
+    // ORIGINAL WORKING SYNTAX RESTORED BELOW
     private suspend fun lockTask(taskId: String): Boolean {
         return try {
-            // FIX: 2.0.0 Update Syntax (Absolutely Correct)
-            client.postgrest[TABLE_QUEUE].update(
-                update = {
-                    set("status", "processing")
-                }
-            ) {
+            client.postgrest[TABLE_QUEUE].update({
+                set("status", "processing")
+            }) {
                 filter {
                     eq("id", taskId)
                     eq("status", "pending")
@@ -136,13 +135,10 @@ object SupabaseManager {
     fun updateTaskAndAcknowledge(task: InteractionTask) {
         networkScope.launch {
             try {
-                // FIX: 2.0.0 Update Syntax (Absolutely Correct)
-                client.postgrest[TABLE_QUEUE].update(
-                    update = {
-                        set("response", task.response)
-                        set("status", task.status)
-                    }
-                ) {
+                client.postgrest[TABLE_QUEUE].update({
+                    set("response", task.response)
+                    set("status", task.status)
+                }) {
                     filter { eq("id", task.id) }
                 }
                 Log.i(TAG, "SUCCESS: Task ${task.id} finalized.")
