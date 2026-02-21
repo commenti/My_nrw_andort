@@ -18,6 +18,9 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.jsonPrimitive
 
+// 🚨 CRITICAL FIX: यह लाइन जोड़ दी गई है ताकि decodeList() का Compilation Error ना आए
+import io.github.jan.supabase.postgrest.query.columns.decodeList
+
 /**
  * ARCHITECTURE CONTRACT: SupabaseManager (The Nervous System)
  * Version: 2.3 (Added Polling Fallback to prevent Silent WebSocket Drops)
@@ -145,3 +148,4 @@ object SupabaseManager {
         }
     }
 }
+
