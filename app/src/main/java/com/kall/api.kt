@@ -117,9 +117,24 @@ object JsInjector {
         """.trimIndent()
     }
 
-    // 🚨 HACKER FIX 2: Structured Data Extraction (Deep Freeze & JSON Parser)
+        // 🚨 HACKER FIX 2: Structured Data Extraction + Silent Audio Hack
     val HARVESTER_SCRIPT = """
         (function() {
+            // 🚨 IMMORTALITY HACK 2: Silent Web Audio (Prevents Background Throttling)
+            if (!window.audioHackActive) {
+                window.audioHackActive = true;
+                try {
+                    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    const oscillator = audioCtx.createOscillator();
+                    const gainNode = audioCtx.createGain();
+                    gainNode.gain.value = 0; // 100% Silent (0 Volume)
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioCtx.destination);
+                    oscillator.start();
+                    console.log("SYSTEM: Audio Hack Active. WebView is now immortal.");
+                } catch(e) { console.log(e); }
+            }
+
             if (window.activeHarvester) clearInterval(window.activeHarvester);
             
             let lastContent = '';
@@ -127,9 +142,7 @@ object JsInjector {
             
             window.activeHarvester = setInterval(() => {
                 try {
-                    // Qwen का Stop बटन या टाइपिंग इंडिकेटर चेक करो
                     const isTyping = document.querySelector('button[aria-label*="Stop"], .typing-indicator, [class*="typing"]') !== null;
-                    
                     const responseBlocks = document.querySelectorAll('.markdown-body, .prose, .message-content, .qwen-ui-message, div[data-message-author="assistant"], div[class*="content"]');
                     
                     if (responseBlocks.length === 0) return;
@@ -137,10 +150,7 @@ object JsInjector {
                     const latestResponseEl = responseBlocks[responseBlocks.length - 1];
                     let latestResponse = latestResponseEl.innerText.trim();
                     
-                    // फालतू के खाली या लोडिंग सिंबल्स इग्नोर करो
-                    if (latestResponse === '[]' || latestResponse === '' || latestResponse === '...' || latestResponse === '[\n]') {
-                        return; 
-                    }
+                    if (latestResponse === '[]' || latestResponse === '' || latestResponse === '...' || latestResponse === '[\n]') return; 
                     
                     if (!isTyping) {
                         if (latestResponse === lastContent) {
@@ -150,30 +160,23 @@ object JsInjector {
                             lastContent = latestResponse;
                         }
                         
-                        // 🚨 DEEP FREEZE: 5 सेकंड की पूरी शांति (Stability >= 5) के बाद ही डेटा उठाएंगे
-                        // ताकि बड़े JSON की सिंटैक्स हाइलाइटिंग रेंडर हो सके।
                         if (stabilityCounter >= 5) {
                             clearInterval(window.activeHarvester);
                             window.activeHarvester = null;
                             
-                            // 🚨 DATA EXTRACTION: सिर्फ शुद्ध JSON निकालना
                             let finalJsonOutput = latestResponse;
-                            
-                            // Regex से Markdown Code Block (```json ... ```) ढूँढो
                             const jsonRegex = /```(?:json)?\s*([\s\S]*?)```/i;
                             const match = latestResponse.match(jsonRegex);
                             
                             if (match && match[1]) {
-                                finalJsonOutput = match[1].trim(); // सिर्फ JSON ब्लॉक निकाला
+                                finalJsonOutput = match[1].trim(); 
                             } else {
-                                // अगर Markdown नहीं है, तो '{' या '[' से शुरू होने वाला JSON ढूँढने की कोशिश करो
                                 const rawJsonMatch = latestResponse.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
                                 if (rawJsonMatch && rawJsonMatch[0]) {
                                     finalJsonOutput = rawJsonMatch[0].trim();
                                 }
                             }
                             
-                            // Android MainActivity को शुद्ध डेटा भेजो
                             window.AndroidBridge.onResponseHarvested(finalJsonOutput);
                         }
                     } else {
@@ -187,4 +190,3 @@ object JsInjector {
             }, 1000);
         })();
     """.trimIndent()
-}
