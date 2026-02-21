@@ -120,11 +120,21 @@ class MainActivity : AppCompatActivity() {
         webView.evaluateJavascript(script, null)
     }
 
-    private fun triggerSelfHealingProtocol() {
+        private fun triggerSelfHealingProtocol() {
         Log.w(TAG, "HEAL: WebView unstable. Reloading in 3s...")
+        
+        // 🚨 HACKER FIX: Infinite Loop Break 
+        // अगर पेज क्रैश होता है, तो टास्क को फेल कर दो ताकि वो बार-बार रन न हो।
+        currentTask?.let {
+            val failedTask = it.copy(response = "SYSTEM_ERROR: Mobile UI form submission caused page reload.", status = "FAILED")
+            SupabaseManager.updateTaskAndAcknowledge(failedTask)
+        }
+        currentTask = null 
+        
         isPageLoaded = false
         webView.postDelayed({ webView.reload() }, 3000)
     }
+
 
     inner class NeuroBridge {
 
