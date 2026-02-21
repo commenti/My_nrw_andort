@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
  * ARCHITECTURE CONTRACT: api.kt
  * Role: Data Models & JavaScript Injection Utilities (Stateless)
  * Constraints: No Android Context, No State, No Network calls.
- * UPDATE: Added Chunked Injection (for heavy payloads) & Smart JSON Extraction.
+ * UPDATE: Added BOOT_IMMORTALITY_SCRIPT for Extreme Deep-Sleep Prevention & Network Keep-Alive.
  */
 
 // ==========================================
@@ -27,15 +27,56 @@ data class InteractionTask(
 
 object JsInjector {
 
+    // 🚨 NEW HACK: ऐप खुलते ही WebView को अमर बनाने और नेटवर्क को ज़िंदा रखने की स्क्रिप्ट
+    val BOOT_IMMORTALITY_SCRIPT = """
+        (function() {
+            // 1. IMMORTALITY HACK: स्टार्ट होते ही Audio Context चालू करें (Deep Sleep रोकेगा)
+            if (!window.audioHackActive) {
+                window.audioHackActive = true;
+                try {
+                    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    const oscillator = audioCtx.createOscillator();
+                    const gainNode = audioCtx.createGain();
+                    gainNode.gain.value = 0; // 100% Silent
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioCtx.destination);
+                    oscillator.start();
+                    console.log("SYSTEM: Boot-level Audio Hack Active. WebView is immortal.");
+                } catch(e) { console.log(e); }
+            }
+
+            // 2. NETWORK KEEP-ALIVE: हर 15 सेकंड में बैकग्राउंड में हलचल करें ताकि वाई-फाई स्लीप मोड में न जाए
+            if (!window.heartbeatActive) {
+                window.heartbeatActive = setInterval(() => {
+                    console.log("SYSTEM: Heartbeat Pulse - Keeping network socket open...");
+                    document.body.dispatchEvent(new Event('mousemove', { bubbles: true }));
+                }, 15000);
+            }
+
+            // 3. AUTO-HEALER: अगर पेज पर नेटवर्क एरर आए, तो खुद ही रीलोड करवा दे
+            if (!window.errorObserverActive) {
+                window.errorObserverActive = true;
+                const observer = new MutationObserver(() => {
+                    const text = document.body.innerText.toLowerCase();
+                    if (text.includes('network error') || text.includes('failed to fetch') || text.includes('no internet')) {
+                        console.log("SYSTEM: Network disconnection detected in UI!");
+                        window.AndroidBridge.onError('DOM_ERROR: AI Page Network Timeout, Self-Healing required...');
+                        observer.disconnect(); 
+                    }
+                });
+                observer.observe(document.body, { childList: true, subtree: true });
+            }
+        })();
+    """.trimIndent()
+
+
     fun buildDispatchScript(rawPrompt: String): String {
-        // 🚨 प्रॉम्प्ट को सुरक्षित बनाना (Escaping for JS)
         val safePrompt = rawPrompt
             .replace("\\", "\\\\")
             .replace("\"", "\\\"")
             .replace("\n", "\\n")
             .replace("\r", "")
 
-        // 🚨 HACKER FIX 1: Cursor-wise / Chunked Injection Logic
         return """
             (function() {
                 try {
@@ -46,13 +87,12 @@ object JsInjector {
                     }
                     
                     const fullText = "$safePrompt";
-                    const chunkSize = 2048; // एक बार में सिर्फ 2048 कैरेक्टर्स डालेंगे ताकि UI फ्रीज़ न हो
+                    const chunkSize = 2048; 
                     const chunks = [];
                     for (let i = 0; i < fullText.length; i += chunkSize) {
                         chunks.push(fullText.substring(i, i + chunkSize));
                     }
                     
-                    // Box को क्लियर करें
                     if (inputEl.tagName.toLowerCase() === 'textarea') {
                         const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
                         setter.call(inputEl, "");
@@ -63,10 +103,8 @@ object JsInjector {
 
                     let currentChunkIndex = 0;
 
-                    // Recursive function to inject chunks slowly (Asynchronous)
                     function injectNextChunk() {
                         if (currentChunkIndex < chunks.length) {
-                            // Android Logcat को प्रोग्रेस बताओ
                             window.AndroidBridge.onChunkProgress(currentChunkIndex + 1, chunks.length);
                             
                             const chunkText = chunks[currentChunkIndex];
@@ -78,14 +116,11 @@ object JsInjector {
                                 inputEl.innerHTML += chunkText;
                             }
                             
-                            // Frameworks (React/Vue) को जगाओ
                             inputEl.dispatchEvent(new Event('input', { bubbles: true }));
                             
                             currentChunkIndex++;
-                            // 50ms का गैप दें ताकि ब्राउज़र का Main Thread "सांस" ले सके
                             setTimeout(injectNextChunk, 50); 
                         } else {
-                            // Injection पूरा हुआ, अब Send बटन दबाएं
                             finalizeInjection();
                         }
                     }
@@ -107,7 +142,6 @@ object JsInjector {
                         }, 1000);
                     }
 
-                    // Start the chunking process
                     injectNextChunk();
 
                 } catch (e) {
@@ -117,24 +151,8 @@ object JsInjector {
         """.trimIndent()
     }
 
-        // 🚨 HACKER FIX 2: Structured Data Extraction + Silent Audio Hack
     val HARVESTER_SCRIPT = """
         (function() {
-            // 🚨 IMMORTALITY HACK 2: Silent Web Audio (Prevents Background Throttling)
-            if (!window.audioHackActive) {
-                window.audioHackActive = true;
-                try {
-                    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                    const oscillator = audioCtx.createOscillator();
-                    const gainNode = audioCtx.createGain();
-                    gainNode.gain.value = 0; // 100% Silent (0 Volume)
-                    oscillator.connect(gainNode);
-                    gainNode.connect(audioCtx.destination);
-                    oscillator.start();
-                    console.log("SYSTEM: Audio Hack Active. WebView is now immortal.");
-                } catch(e) { console.log(e); }
-            }
-
             if (window.activeHarvester) clearInterval(window.activeHarvester);
             
             let lastContent = '';
@@ -190,3 +208,5 @@ object JsInjector {
             }, 1000);
         })();
     """.trimIndent()
+}
+
