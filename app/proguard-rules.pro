@@ -1,6 +1,7 @@
 # ARCHITECTURE CONTRACT: proguard-rules.pro
 # Role: Code Shrinking, Obfuscation, and Optimization.
 # Constraints: Must protect JavaScript Bridge and Supabase Serialization.
+# UPDATE: Fixed NeuroBridge path for the new standalone Leak-Proof architecture.
 
 # ---------------------------------------------------------
 # 1. KOTLIN & COROUTINES
@@ -15,9 +16,9 @@
 # ---------------------------------------------------------
 # 2. ANDROIDX & WEBVIEW (CRITICAL)
 # ---------------------------------------------------------
-# Protect the JavaScript Interface from being renamed or stripped.
-# Without this, the 'AndroidBridge' will fail silently.
--keepclassmembers class com.kall.MainActivity$NeuroBridge {
+# 🚨 SECURITY FIX: Protect the standalone JavaScript Interface from being renamed or stripped.
+-keep class com.kall.NeuroBridge { *; }
+-keepclassmembers class com.kall.NeuroBridge {
     @android.webkit.JavascriptInterface <methods>;
 }
 
