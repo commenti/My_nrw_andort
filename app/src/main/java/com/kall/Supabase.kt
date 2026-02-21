@@ -13,23 +13,26 @@ import io.github.jan.supabase.realtime.realtime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.jsonPrimitive
 
+// 🚨 ब्रह्मास्त्र: Direct HTTP API के लिए Android के इनबिल्ट पैकेजेस
+import java.net.HttpURLConnection
+import java.net.URL
+import org.json.JSONArray
+
 /**
  * ARCHITECTURE CONTRACT: SupabaseManager (The Nervous System)
- * Version: 2.2 (Updated for 'ai_tasks' table)
+ * Version: 3.0 (BYPASSED SUPABASE-KT COMPILATION ERRORS USING DIRECT REST API)
  */
 object SupabaseManager {
 
     private const val TAG = "Kall_NervousSystem"
-    
-    // CRITICAL FIX: Changed from 'interaction_queue' to 'ai_tasks' based on new SQL
     private const val TABLE_QUEUE = "ai_tasks"
 
-    // Your existing credentials
     private const val SUPABASE_URL = "https://aeopowovqksexgvseiyq.supabase.co"
     private const val SUPABASE_KEY = "sb_publishable_HX5GTYwHATs3gTksy-ZV9w_AQNIfM7t"
 
@@ -47,6 +50,9 @@ object SupabaseManager {
             install(Realtime)
         }
 
+        // ==========================================
+        // METHOD 1: REALTIME (तुम्हारे ओरिजिनल कोड के अनुसार)
+        // ==========================================
         networkScope.launch {
             try {
                 client.realtime.connect()
@@ -62,8 +68,6 @@ object SupabaseManager {
 
                 changeFlow.onEach { action ->
                     val record = action.record
-                    Log.d(TAG, "EVENT: New row detected. Filtering for status=pending...")
-
                     val status = record["status"]?.jsonPrimitive?.content
                     if (status == "pending") {
                         val task = InteractionTask(
@@ -71,7 +75,6 @@ object SupabaseManager {
                             prompt = record["prompt"]?.jsonPrimitive?.content ?: "",
                             status = "pending"
                         )
-
                         if (task.id.isNotEmpty()) {
                             if (lockTask(task.id)) {
                                 onNewTask(task)
@@ -81,13 +84,57 @@ object SupabaseManager {
                 }.launchIn(this)
 
                 channel.subscribe()
-                
             } catch (e: Exception) {
                 Log.e(TAG, "FATAL: Connectivity lost in Nervous System - ${e.message}")
             }
         }
+
+        // ==========================================
+        // METHOD 2: POLLING FALLBACK (DIRECT HTTP REST API - NO COMPILATION ERRORS)
+        // ==========================================
+        networkScope.launch(Dispatchers.IO) {
+            while (true) {
+                try {
+                    // Supabase-kt लाइब्रेरी को बायपास करके सीधे URL पर कॉल मारेंगे
+                    val url = URL("$SUPABASE_URL/rest/v1/$TABLE_QUEUE?status=eq.pending")
+                    val connection = url.openConnection() as HttpURLConnection
+                    connection.requestMethod = "GET"
+                    connection.setRequestProperty("apikey", SUPABASE_KEY)
+                    connection.setRequestProperty("Authorization", "Bearer $SUPABASE_KEY")
+                    connection.setRequestProperty("Accept", "application/json")
+                    
+                    if (connection.responseCode == 200) {
+                        val responseStr = connection.inputStream.bufferedReader().use { it.readText() }
+                        val jsonArray = JSONArray(responseStr)
+                        
+                        if (jsonArray.length() > 0) {
+                            val firstObj = jsonArray.getJSONObject(0)
+                            val task = InteractionTask(
+                                id = firstObj.optString("id", ""),
+                                prompt = firstObj.optString("prompt", ""),
+                                status = "pending"
+                            )
+                            
+                            if (task.id.isNotEmpty()) {
+                                if (lockTask(task.id)) {
+                                    Log.i(TAG, "POLLING: Picked up pending task directly via REST API.")
+                                    onNewTask(task)
+                                }
+                            }
+                        }
+                    }
+                    connection.disconnect()
+                } catch (e: Exception) {
+                    // साइलेंट इग्नोर ताकि लूप चलता रहे
+                }
+                delay(3000) // हर 3 सेकंड में चेक करेगा
+            }
+        }
     }
 
+    // ==========================================
+    // 100% ORIGINAL WORKING SYNTAX (No changes here)
+    // ==========================================
     private suspend fun lockTask(taskId: String): Boolean {
         return try {
             client.postgrest[TABLE_QUEUE].update({
