@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
  * ARCHITECTURE CONTRACT: api.kt
  * Role: Data Models & JavaScript Injection Utilities (Stateless)
  * Constraints: No Android Context, No State, No Network calls.
- * UPDATE: Optimized for Modern React/Vue UIs (Qwen) & evaluateJavascript compatibility.
+ * UPDATE: Added Chunked Injection (for heavy payloads) & Smart JSON Extraction.
  */
 
 // ==========================================
@@ -28,12 +28,14 @@ data class InteractionTask(
 object JsInjector {
 
     fun buildDispatchScript(rawPrompt: String): String {
+        // 🚨 प्रॉम्प्ट को सुरक्षित बनाना (Escaping for JS)
         val safePrompt = rawPrompt
             .replace("\\", "\\\\")
             .replace("\"", "\\\"")
             .replace("\n", "\\n")
             .replace("\r", "")
 
+        // 🚨 HACKER FIX 1: Cursor-wise / Chunked Injection Logic
         return """
             (function() {
                 try {
@@ -43,33 +45,71 @@ object JsInjector {
                         return;
                     }
                     
-                    // 🚨 HACKER FIX 1: Bulletproof Injection (No weird symbols)
-                    if (inputEl.tagName.toLowerCase() === 'textarea') {
-                        // React Native Setter for Textareas
-                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-                        nativeInputValueSetter.call(inputEl, "$safePrompt");
-                    } else {
-                        // Safe injection for ContentEditable Divs (Mobile UI)
-                        inputEl.innerHTML = "$safePrompt";
-                        inputEl.textContent = "$safePrompt"; 
+                    const fullText = "$safePrompt";
+                    const chunkSize = 2048; // एक बार में सिर्फ 2048 कैरेक्टर्स डालेंगे ताकि UI फ्रीज़ न हो
+                    const chunks = [];
+                    for (let i = 0; i < fullText.length; i += chunkSize) {
+                        chunks.push(fullText.substring(i, i + chunkSize));
                     }
                     
-                    // Trigger events so the Send button lights up
-                    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-                    inputEl.dispatchEvent(new Event('change', { bubbles: true }));
-                    
-                    setTimeout(() => {
-                        let possibleBtns = Array.from(document.querySelectorAll('button')).filter(b => !b.disabled && b.querySelector('svg'));
-                        let sendBtn = document.querySelector('button[aria-label*="send" i], button[data-testid*="send" i], button.send-btn') 
-                                      || possibleBtns[possibleBtns.length - 1]; 
-                        
-                        if (sendBtn) {
-                            sendBtn.click();
-                            window.AndroidBridge.onInjectionSuccess('SUCCESS: Payload clicked dynamically');
+                    // Box को क्लियर करें
+                    if (inputEl.tagName.toLowerCase() === 'textarea') {
+                        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+                        setter.call(inputEl, "");
+                    } else {
+                        inputEl.innerHTML = "";
+                    }
+                    inputEl.focus();
+
+                    let currentChunkIndex = 0;
+
+                    // Recursive function to inject chunks slowly (Asynchronous)
+                    function injectNextChunk() {
+                        if (currentChunkIndex < chunks.length) {
+                            // Android Logcat को प्रोग्रेस बताओ
+                            window.AndroidBridge.onChunkProgress(currentChunkIndex + 1, chunks.length);
+                            
+                            const chunkText = chunks[currentChunkIndex];
+                            
+                            if (inputEl.tagName.toLowerCase() === 'textarea') {
+                                const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+                                setter.call(inputEl, inputEl.value + chunkText);
+                            } else {
+                                inputEl.innerHTML += chunkText;
+                            }
+                            
+                            // Frameworks (React/Vue) को जगाओ
+                            inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+                            
+                            currentChunkIndex++;
+                            // 50ms का गैप दें ताकि ब्राउज़र का Main Thread "सांस" ले सके
+                            setTimeout(injectNextChunk, 50); 
                         } else {
-                            window.AndroidBridge.onError('DOM_ERROR: Send button completely hidden');
+                            // Injection पूरा हुआ, अब Send बटन दबाएं
+                            finalizeInjection();
                         }
-                    }, 1000); 
+                    }
+
+                    function finalizeInjection() {
+                        inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+                        
+                        setTimeout(() => {
+                            let possibleBtns = Array.from(document.querySelectorAll('button')).filter(b => !b.disabled && b.querySelector('svg'));
+                            let sendBtn = document.querySelector('button[aria-label*="send" i], button[data-testid*="send" i], button.send-btn') 
+                                          || possibleBtns[possibleBtns.length - 1]; 
+                            
+                            if (sendBtn) {
+                                sendBtn.click();
+                                window.AndroidBridge.onInjectionSuccess('SUCCESS: Heavy Payload chunked & clicked');
+                            } else {
+                                window.AndroidBridge.onError('DOM_ERROR: Send button completely hidden');
+                            }
+                        }, 1000);
+                    }
+
+                    // Start the chunking process
+                    injectNextChunk();
+
                 } catch (e) {
                     window.AndroidBridge.onError('EXECUTION_ERROR: ' + e.message);
                 }
@@ -77,6 +117,7 @@ object JsInjector {
         """.trimIndent()
     }
 
+    // 🚨 HACKER FIX 2: Structured Data Extraction (Deep Freeze & JSON Parser)
     val HARVESTER_SCRIPT = """
         (function() {
             if (window.activeHarvester) clearInterval(window.activeHarvester);
@@ -86,17 +127,22 @@ object JsInjector {
             
             window.activeHarvester = setInterval(() => {
                 try {
+                    // Qwen का Stop बटन या टाइपिंग इंडिकेटर चेक करो
                     const isTyping = document.querySelector('button[aria-label*="Stop"], .typing-indicator, [class*="typing"]') !== null;
                     
-                    // 🚨 HACKER FIX 2: Broader Mobile CSS Selectors
-                    // यह अब मोबाइल UI के हर तरह के रिस्पॉन्स बॉक्स को पढ़ लेगा
                     const responseBlocks = document.querySelectorAll('.markdown-body, .prose, .message-content, .qwen-ui-message, div[data-message-author="assistant"], div[class*="content"]');
                     
-                    if (responseBlocks.length === 0) return; // Wait until response UI appears
+                    if (responseBlocks.length === 0) return;
                     
-                    const latestResponse = responseBlocks[responseBlocks.length - 1].innerText;
+                    const latestResponseEl = responseBlocks[responseBlocks.length - 1];
+                    let latestResponse = latestResponseEl.innerText.trim();
                     
-                    if (!isTyping && latestResponse.trim().length > 0) {
+                    // फालतू के खाली या लोडिंग सिंबल्स इग्नोर करो
+                    if (latestResponse === '[]' || latestResponse === '' || latestResponse === '...' || latestResponse === '[\n]') {
+                        return; 
+                    }
+                    
+                    if (!isTyping) {
                         if (latestResponse === lastContent) {
                             stabilityCounter++;
                         } else {
@@ -104,11 +150,31 @@ object JsInjector {
                             lastContent = latestResponse;
                         }
                         
-                        // 3 सेकंड तक जवाब न बदले, तो उसे फाइनल मान लो
-                        if (stabilityCounter >= 3) {
+                        // 🚨 DEEP FREEZE: 5 सेकंड की पूरी शांति (Stability >= 5) के बाद ही डेटा उठाएंगे
+                        // ताकि बड़े JSON की सिंटैक्स हाइलाइटिंग रेंडर हो सके।
+                        if (stabilityCounter >= 5) {
                             clearInterval(window.activeHarvester);
                             window.activeHarvester = null;
-                            window.AndroidBridge.onResponseHarvested(latestResponse);
+                            
+                            // 🚨 DATA EXTRACTION: सिर्फ शुद्ध JSON निकालना
+                            let finalJsonOutput = latestResponse;
+                            
+                            // Regex से Markdown Code Block (```json ... ```) ढूँढो
+                            const jsonRegex = /```(?:json)?\s*([\s\S]*?)```/i;
+                            const match = latestResponse.match(jsonRegex);
+                            
+                            if (match && match[1]) {
+                                finalJsonOutput = match[1].trim(); // सिर्फ JSON ब्लॉक निकाला
+                            } else {
+                                // अगर Markdown नहीं है, तो '{' या '[' से शुरू होने वाला JSON ढूँढने की कोशिश करो
+                                const rawJsonMatch = latestResponse.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+                                if (rawJsonMatch && rawJsonMatch[0]) {
+                                    finalJsonOutput = rawJsonMatch[0].trim();
+                                }
+                            }
+                            
+                            // Android MainActivity को शुद्ध डेटा भेजो
+                            window.AndroidBridge.onResponseHarvested(finalJsonOutput);
                         }
                     } else {
                         stabilityCounter = 0;
