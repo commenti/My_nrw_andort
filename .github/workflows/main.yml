@@ -1,54 +1,50 @@
-name: Error Spy Agent 🕵️‍♂️
+name: Kall-Android-Production-Build
 
 on:
-  workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
 
 jobs:
-  hunt-errors:
-    name: 🔍 Hunting for Real Errors
+  build:
+    name: Build Production Worker APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Clone Repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: ☕ Setup Java 17
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
           java-version: '17'
+          distribution: 'temurin'
 
-      - name: 🐘 Setup Gradle
+      # ARCHITECTURE UPDATE: Upgraded to v4 for faster caching & Node 20 support
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.2"
 
-      - name: 🕵️‍♂️ Run Silent Build & Capture Everything
-        run: |
-          echo "Spy Agent is running the build in stealth mode..."
-          gradle assembleDebug --stacktrace > full_build_log.txt 2>&1 || echo "Build stopped. Time to scan logs!"
+      # Added --info flag for deep logging
+      - name: Compile and Assemble APK
+        run: gradle assembleDebug --stacktrace --info --no-daemon
 
-      - name: 🚨 Extract Real Errors (The Magic)
-        run: |
-          echo "### 🕵️‍♂️ Spy Agent Error Report" >> $GITHUB_STEP_SUMMARY
-          echo "मुझे तुम्हारे कोड में ये असली मुजरिम मिले हैं:" >> $GITHUB_STEP_SUMMARY
-          echo '```text' >> $GITHUB_STEP_SUMMARY
-          
-          # Kotlin Syntax Errors
-          grep -E "^e: " full_build_log.txt >> $GITHUB_STEP_SUMMARY || true
-          
-          # AAPT / Resource Errors
-          grep -A 3 -i "AAPT: error:" full_build_log.txt >> $GITHUB_STEP_SUMMARY || true
-          
-          # Main Task Failure
-          grep -E "Execution failed for task" full_build_log.txt >> $GITHUB_STEP_SUMMARY || true
-          
-          echo '```' >> $GITHUB_STEP_SUMMARY
-
-      - name: 📤 Upload Full Log (Backup)
+      # 🚨 NEW EMERGENCY PROTOCOL: Catching the exact error if AAPT2 or Kotlin fails
+      - name: Upload Build Reports (On Failure)
         uses: actions/upload-artifact@v4
+        if: failure()
         with:
-          name: Spy-Complete-Log
-          path: full_build_log.txt
+          name: build-failure-reports
+          path: app/build/reports/
+          retention-days: 3
+
+      - name: Upload Finished Artifact
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: kall-worker-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 5
