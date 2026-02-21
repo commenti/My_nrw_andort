@@ -5,10 +5,12 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.postgresChangeFlow
+import io.github.jan.supabase.realtime.realtime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,15 +22,15 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * ARCHITECTURE CONTRACT: SupabaseManager (The Nervous System)
- * Version: 2.4 (Compilation Fix - Removed invalid decodeList import)
+ * Version: 2.5 (Final Compilation Fix - Polling Logic Refactored)
  */
 object SupabaseManager {
 
     private const val TAG = "Kall_NervousSystem"
-    private const val TABLE_QUEUE = "ai_tasks"
+    [span_5](start_span)private const val TABLE_QUEUE = "ai_tasks"[span_5](end_span)
 
-    private const val SUPABASE_URL = "https://aeopowovqksexgvseiyq.supabase.co"
-    private const val SUPABASE_KEY = "sb_publishable_HX5GTYwHATs3gTksy-ZV9w_AQNIfM7t"
+    [span_6](start_span)[span_7](start_span)private const val SUPABASE_URL = "https://aeopowovqksexgvseiyq.supabase.co"[span_6](end_span)[span_7](end_span)
+    [span_8](start_span)[span_9](start_span)private const val SUPABASE_KEY = "sb_publishable_HX5GTYwHATs3gTksy-ZV9w_AQNIfM7t"[span_8](end_span)[span_9](end_span)
 
     private lateinit var client: SupabaseClient
     private val networkScope = CoroutineScope(Dispatchers.IO + Job())
@@ -47,7 +49,7 @@ object SupabaseManager {
         networkScope.launch {
             
             // ==========================================
-            // METHOD 1: REALTIME (घंटी बजने का इंतज़ार)
+            // METHOD 1: REALTIME (WebSocket Listener)
             // ==========================================
             launch {
                 try {
@@ -74,35 +76,37 @@ object SupabaseManager {
 
                     channel.subscribe()
                 } catch (e: Exception) {
-                    Log.e(TAG, "FATAL: Connectivity lost in Nervous System - ${e.message}")
+                    Log.e(TAG, "REALTIME ERROR: ${e.message}")
                 }
             }
 
             // ==========================================
-            // METHOD 2: POLLING FALLBACK (हर 3 सेकंड में चेक करना)
+            // METHOD 2: POLLING FALLBACK (Robust Heartbeat)
             // ==========================================
             launch {
                 while(true) {
                     try {
-                        // डेटाबेस से 'pending' स्टेटस वाले टास्क मांगो
-                        val pendingTasks = client.postgrest[TABLE_QUEUE]
-                            .select { filter { eq("status", "pending") } }
-                            .decodeList<InteractionTask>()
+                        // Polling: Manually fetch pending tasks if WebSocket drops
+                        val response = client.postgrest[TABLE_QUEUE]
+                            .select(Columns.ALL) {
+                                filter { eq("status", "pending") }
+                            }
+                        
+                        val pendingTasks = response.decodeList<InteractionTask>()
 
-                        // अगर कोई टास्क मिला, तो उसे प्रोसेस करो
                         if (pendingTasks.isNotEmpty()) {
+                            Log.i(TAG, "POLLING: Found ${pendingTasks.size} tasks. Processing first...")
                             handlePendingTask(pendingTasks.first(), onNewTask)
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "POLLING ERROR: ${e.message}") // साइलेंट इग्नोर ताकि लूप न टूटे
+                        // Silent catch to prevent loop breakage
                     }
-                    delay(3000) // 3 सेकंड का इंतज़ार
+                    delay(3000) // Poll every 3 seconds
                 }
             }
         }
     }
 
-    // DRY Principle: दोनों मेथड इसी फंक्शन का इस्तेमाल करेंगे
     private suspend fun handlePendingTask(task: InteractionTask, onNewTask: (InteractionTask) -> Unit) {
         if (task.id.isNotEmpty()) {
             if (lockTask(task.id)) {
@@ -121,10 +125,9 @@ object SupabaseManager {
                     eq("status", "pending")
                 }
             }
-            Log.i(TAG, "LOCK: Task $taskId is now mine.")
+            Log.i(TAG, "LOCK: Task $taskId claimed.")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "LOCK ERROR: Task $taskId might be taken - ${e.message}")
             false
         }
     }
@@ -138,9 +141,9 @@ object SupabaseManager {
                 }) {
                     filter { eq("id", task.id) }
                 }
-                Log.i(TAG, "SUCCESS: Task ${task.id} finalized in cloud.")
+                Log.i(TAG, "SUCCESS: Task ${task.id} finalized.")
             } catch (e: Exception) {
-                Log.e(TAG, "DB ERROR: Failed to acknowledge task ${task.id} - ${e.message}")
+                Log.e(TAG, "DB UPDATE ERROR: ${e.message}")
             }
         }
     }
