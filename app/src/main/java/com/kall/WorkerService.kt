@@ -12,7 +12,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.os.PowerManager
-import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.app.NotificationCompat
@@ -21,9 +20,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-// ==========================================
-// 1. THE SHIELD & THE BRAIN (24/7 Listener)
-// ==========================================
 class WorkerService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -35,18 +31,18 @@ class WorkerService : Service() {
         createNotificationChannels()
         acquireWakeLock()
 
-        Log.d("Kall_Shield", "BOOT: Starting 24/7 Cloud Listener...")
+        AppLogger.log("🛡️ WORKER: Booting 24/7 Shield...")
         SupabaseManager.initializeNetworkListener { task ->
-            Log.i("Kall_Shield", "SIGNAL: New Task ${task.id} incoming. Triggering Alarm Hack!")
+            AppLogger.log("☁️ CLOUD: Task ${task.id} received! Triggering Hack...")
             TaskMemory.currentTask = task
             triggerFullScreenAlarm()
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Neuro-Link Active")
-            .setContentText("Worker is listening to Python 24/7...")
+            .setContentText("Listening to Python 24/7...")
             .setSmallIcon(android.R.drawable.ic_menu_info_details)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
@@ -64,7 +60,6 @@ class WorkerService : Service() {
         ).apply { acquire(10 * 60 * 1000L) }
     }
 
-    // 🚨 THE HACK: Android 15 के बैकग्राउंड ब्लॉक को तोड़ने के लिए Full-Screen Intent
     private fun triggerFullScreenAlarm() {
         try {
             val intent = Intent(this, MainActivity::class.java).apply {
@@ -80,18 +75,17 @@ class WorkerService : Service() {
                 .setSmallIcon(android.R.drawable.ic_menu_info_details)
                 .setContentTitle("Incoming AI Task")
                 .setContentText("Waking up the system...")
-                .setPriority(NotificationCompat.PRIORITY_MAX) // सबसे हाई प्रायोरिटी
-                .setCategory(NotificationCompat.CATEGORY_ALARM) // Android को लगेगा अलार्म बज रहा है
-                .setFullScreenIntent(pendingIntent, true) // स्क्रीन पर जबरदस्ती फेकेगा
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setFullScreenIntent(pendingIntent, true)
                 .setAutoCancel(true)
                 .build()
 
-            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.notify(99, alarmNotification)
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(99, alarmNotification)
             
-            Log.i("Kall_Shield", "HACK: Full-Screen Intent Fired! MainActivity should pop up now.")
         } catch (e: Exception) {
-            Log.e("Kall_Shield", "ALARM HACK ERROR: ${e.message}")
+            AppLogger.log("❌ FATAL ALARM HACK ERROR: ${e.message}")
         }
     }
 
@@ -103,23 +97,16 @@ class WorkerService : Service() {
     private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(NotificationManager::class.java)
-            
-            val serviceChannel = NotificationChannel(CHANNEL_ID, "Kall Worker", NotificationManager.IMPORTANCE_LOW)
-            manager.createNotificationChannel(serviceChannel)
-            
-            // अलार्म के लिए हाई प्रायोरिटी चैनल
-            val alarmChannel = NotificationChannel(ALARM_CHANNEL_ID, "Kall Alarm", NotificationManager.IMPORTANCE_HIGH)
-            manager.createNotificationChannel(alarmChannel)
+            manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Kall Worker", NotificationManager.IMPORTANCE_LOW))
+            manager.createNotificationChannel(NotificationChannel(ALARM_CHANNEL_ID, "Kall Alarm", NotificationManager.IMPORTANCE_HIGH))
         }
     }
 }
 
 // ==========================================
-// 2. THE INVISIBLE ROBOT
+// 🚨 SMART ROBOT (अब डिब्बा छुप नहीं सकता)
 // ==========================================
 class AutoBotService : AccessibilityService() {
-
-    companion object { private const val TAG = "Kall_Robot" }
     private var isTyping = false
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -130,39 +117,44 @@ class AutoBotService : AccessibilityService() {
         if (!currentPackage.contains("qwenlm")) return 
 
         if (task.status == "pending" && !isTyping) {
+            // हर बार स्क्रीन बदलने पर रोबोट डिब्बा ढूंढेगा (Retry Logic)
             executeInjection(rootNode, task)
         } else if (task.status == "processing") {
             harvestReply(rootNode, task)
         }
     }
 
-    override fun onInterrupt() { Log.w(TAG, "SYSTEM: Robot Interrupted!") }
+    override fun onInterrupt() {}
 
     private fun executeInjection(rootNode: AccessibilityNodeInfo, task: InteractionTask) {
-        isTyping = true
-        val inputBox = findNodeByClass(rootNode, "android.widget.EditText")
+        // 🚨 MAGIC: अब हम EditText नहीं, "Editable" प्रॉपर्टी ढूंढ रहे हैं!
+        val inputBox = findEditableNode(rootNode)
         
         if (inputBox != null) {
-            Log.i(TAG, "ROBOT: Input box found in Qwen. Injecting...")
+            isTyping = true // डिब्बा मिल गया, अब और मत ढूंढो
+            AppLogger.log("🎯 ROBOT: Text Box Locked! Injecting message...")
+            
             val arguments = Bundle()
             arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, task.prompt)
             inputBox.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
 
             CoroutineScope(Dispatchers.Main).launch {
-                delay(1000)
+                delay(1000) // बटन दबाने से पहले 1 सेकंड रुको
                 val freshRoot = rootInActiveWindow
                 if (freshRoot != null) {
                     val sendBtn = findSendButton(freshRoot)
                     if (sendBtn != null) {
                         sendBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        Log.i(TAG, "ROBOT: Payload sent! Waiting for reply...")
+                        AppLogger.log("🚀 ROBOT: Send button clicked! Waiting for reply...")
                         TaskMemory.currentTask = task.copy(status = "processing")
+                    } else {
+                        AppLogger.log("❌ ROBOT ERROR: Box found, but Send Button missing!")
                     }
                 }
-                isTyping = false
+                isTyping = false // प्रोसेस खत्म
             }
         } else {
-            isTyping = false
+            // डिब्बा नहीं मिला (शायद स्क्रीन लोड हो रही है), रोबोट चुप रहेगा और अगली इवेंट का इंतज़ार करेगा
         }
     }
 
@@ -173,7 +165,7 @@ class AutoBotService : AccessibilityService() {
         if (allTexts.isNotEmpty()) {
             val latestReply = allTexts.last()
             if (latestReply.length > 5 && latestReply != task.prompt) {
-                Log.i(TAG, "ROBOT: Reply Harvested! Sending back to Cloud...")
+                AppLogger.log("🤖 ROBOT: Reply harvested! Sending to Cloud...")
                 val completedTask = task.copy(status = "completed", response = latestReply)
                 SupabaseManager.updateTaskAndAcknowledge(completedTask)
                 TaskMemory.currentTask = null 
@@ -181,20 +173,27 @@ class AutoBotService : AccessibilityService() {
         }
     }
 
-    private fun findNodeByClass(node: AccessibilityNodeInfo, className: String): AccessibilityNodeInfo? {
-        if (node.className?.toString()?.contains(className, true) == true) return node
+    // 🚨 SMART NODE FINDER
+    private fun findEditableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        // अगर डिब्बे में टाइप हो सकता है, तो यही हमारा टारगेट है!
+        if (node.isEditable || node.className?.toString()?.contains("EditText", true) == true) {
+            return node
+        }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val found = findNodeByClass(child, className)
+            val found = findEditableNode(child)
             if (found != null) return found
         }
         return null
     }
 
     private fun findSendButton(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        if (node.isClickable && (node.className?.toString()?.contains("Button") == true || node.className?.toString()?.contains("Image") == true)) {
-            val desc = node.contentDescription?.toString()?.lowercase() ?: ""
-            if (desc.contains("send")) return node
+        val desc = node.contentDescription?.toString()?.lowercase() ?: ""
+        val text = node.text?.toString()?.lowercase() ?: ""
+        
+        // Qwen का सेंड बटन ImageView, Button या View कुछ भी हो सकता है
+        if (node.isClickable && (desc.contains("send") || text.contains("send") || desc.contains("submit") || desc.contains("भेजें"))) {
+            return node
         }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
