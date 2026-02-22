@@ -1,4 +1,4 @@
-package com.kall
+package com.kall // 🚨 FIX: 'P' छोटा कर दिया गया है!
 
 import android.util.Log
 import io.github.jan.supabase.SupabaseClient
