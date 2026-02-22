@@ -20,6 +20,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+// ==========================================
+// 1. THE SHIELD & THE BRAIN (24/7 Listener)
+// ==========================================
 class WorkerService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -104,10 +107,15 @@ class WorkerService : Service() {
 }
 
 // ==========================================
-// 🚨 SMART ROBOT (अब डिब्बा छुप नहीं सकता)
+// 🚨 SMART ROBOT (HUNTER + SNIPER MODE 🎯)
 // ==========================================
 class AutoBotService : AccessibilityService() {
     private var isTyping = false
+    private var searchJob: kotlinx.coroutines.Job? = null
+
+    override fun onServiceConnected() {
+        AppLogger.log("🟢 ROBOT: Service Connected & Alive in Android System!")
+    }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val task = TaskMemory.currentTask ?: return
@@ -116,9 +124,10 @@ class AutoBotService : AccessibilityService() {
         val currentPackage = rootNode.packageName?.toString() ?: ""
         if (!currentPackage.contains("qwenlm")) return 
 
-        if (task.status == "pending" && !isTyping) {
-            // हर बार स्क्रीन बदलने पर रोबोट डिब्बा ढूंढेगा (Retry Logic)
-            executeInjection(rootNode, task)
+        // 🚨 अगर टास्क पेंडिंग है और रोबोट अभी खाली है, तो हंटर मोड चालू करो!
+        if (task.status == "pending" && !isTyping && searchJob == null) {
+            AppLogger.log("🤖 ROBOT: Qwen App detected! Starting Sniper Mode...")
+            startHuntingForBox(task)
         } else if (task.status == "processing") {
             harvestReply(rootNode, task)
         }
@@ -126,35 +135,54 @@ class AutoBotService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
-    private fun executeInjection(rootNode: AccessibilityNodeInfo, task: InteractionTask) {
-        // 🚨 MAGIC: अब हम EditText नहीं, "Editable" प्रॉपर्टी ढूंढ रहे हैं!
-        val inputBox = findEditableNode(rootNode)
-        
-        if (inputBox != null) {
-            isTyping = true // डिब्बा मिल गया, अब और मत ढूंढो
-            AppLogger.log("🎯 ROBOT: Text Box Locked! Injecting message...")
+    private fun startHuntingForBox(task: InteractionTask) {
+        searchJob = CoroutineScope(Dispatchers.Main).launch {
+            isTyping = true
+            var inputBox: AccessibilityNodeInfo? = null
+            var attempts = 0
             
-            val arguments = Bundle()
-            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, task.prompt)
-            inputBox.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-
-            CoroutineScope(Dispatchers.Main).launch {
-                delay(1000) // बटन दबाने से पहले 1 सेकंड रुको
-                val freshRoot = rootInActiveWindow
-                if (freshRoot != null) {
-                    val sendBtn = findSendButton(freshRoot)
-                    if (sendBtn != null) {
-                        sendBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        AppLogger.log("🚀 ROBOT: Send button clicked! Waiting for reply...")
-                        TaskMemory.currentTask = task.copy(status = "processing")
-                    } else {
-                        AppLogger.log("❌ ROBOT ERROR: Box found, but Send Button missing!")
-                    }
+            // 🚨 10 सेकंड तक लगातार डिब्बा ढूंढेगा (Loading स्क्रीन को हराने के लिए)
+            while (inputBox == null && attempts < 10) {
+                val root = rootInActiveWindow
+                if (root != null) {
+                    inputBox = findEditableNode(root)
                 }
-                isTyping = false // प्रोसेस खत्म
+                if (inputBox == null) {
+                    AppLogger.log("👀 ROBOT: Searching for text box... (Attempt ${attempts + 1}/10)")
+                    delay(1000)
+                    attempts++
+                }
             }
-        } else {
-            // डिब्बा नहीं मिला (शायद स्क्रीन लोड हो रही है), रोबोट चुप रहेगा और अगली इवेंट का इंतज़ार करेगा
+
+            if (inputBox != null) {
+                AppLogger.log("🎯 ROBOT: Box Locked! Injecting message...")
+                
+                // मैसेज डालो
+                val arguments = Bundle()
+                arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, task.prompt)
+                inputBox.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+
+                // 🚨 ऐप को जगाने के लिए डिब्बे पर एक क्लिक मारो (ताकि Send बटन आ जाए)
+                inputBox.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+
+                delay(1500) // 1.5 सेकंड रुको ताकि UI अपडेट हो जाए
+                
+                val rootAfterType = rootInActiveWindow
+                val sendBtn = if (rootAfterType != null) findSendButton(rootAfterType) else null
+                
+                if (sendBtn != null) {
+                    sendBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    AppLogger.log("🚀 ROBOT: Send button clicked! Waiting for AI reply...")
+                    TaskMemory.currentTask = task.copy(status = "processing")
+                } else {
+                    AppLogger.log("❌ ROBOT ERROR: Box found, but Send Button missing!")
+                    isTyping = false
+                }
+            } else {
+                AppLogger.log("❌ ROBOT ERROR: Could not find input box even after 10 seconds.")
+                isTyping = false
+            }
+            searchJob = null 
         }
     }
 
@@ -173,9 +201,7 @@ class AutoBotService : AccessibilityService() {
         }
     }
 
-    // 🚨 SMART NODE FINDER
     private fun findEditableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        // अगर डिब्बे में टाइप हो सकता है, तो यही हमारा टारगेट है!
         if (node.isEditable || node.className?.toString()?.contains("EditText", true) == true) {
             return node
         }
@@ -187,20 +213,43 @@ class AutoBotService : AccessibilityService() {
         return null
     }
 
-    private fun findSendButton(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        val desc = node.contentDescription?.toString()?.lowercase() ?: ""
-        val text = node.text?.toString()?.lowercase() ?: ""
-        
-        // Qwen का सेंड बटन ImageView, Button या View कुछ भी हो सकता है
-        if (node.isClickable && (desc.contains("send") || text.contains("send") || desc.contains("submit") || desc.contains("भेजें"))) {
-            return node
+    // 🚨 SNIPER LOGIC: सेंड बटन ढूंढने का ब्रह्मास्त्र
+    private fun findSendButton(rootNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val possibleButtons = mutableListOf<AccessibilityNodeInfo>()
+        collectClickableButtons(rootNode, possibleButtons)
+
+        // 1. पहले नाम से चेक करो
+        for (btn in possibleButtons) {
+            val desc = btn.contentDescription?.toString()?.lowercase() ?: ""
+            val text = btn.text?.toString()?.lowercase() ?: ""
+            if (desc.contains("send") || desc.contains("submit") || desc.contains("arrow") || 
+                desc.contains("up") || text.contains("send") || desc.contains("post") || desc.contains("भेजें")) {
+                return btn
+            }
         }
+
+        // 2. 🚨 THE HACK: अगर कोई नाम नहीं मिला, तो स्क्रीन का सबसे आखिरी बटन (Bottom Right) ही Send बटन होता है!
+        if (possibleButtons.isNotEmpty()) {
+            return possibleButtons.last()
+        }
+
+        return null
+    }
+
+    private fun collectClickableButtons(node: AccessibilityNodeInfo, list: MutableList<AccessibilityNodeInfo>) {
+        val className = node.className?.toString() ?: ""
+        val isButtonOrImage = className.contains("Button") || className.contains("Image") || className.contains("ImageView")
+        
+        if (node.isClickable && isButtonOrImage) {
+            list.add(node)
+        } else if (!node.isClickable && isButtonOrImage && node.parent?.isClickable == true) {
+            list.add(node.parent) 
+        }
+
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val found = findSendButton(child)
-            if (found != null) return found
+            collectClickableButtons(child, list)
         }
-        return null
     }
 
     private fun extractAllTexts(node: AccessibilityNodeInfo, list: MutableList<String>) {
