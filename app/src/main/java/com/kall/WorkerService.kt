@@ -6,6 +6,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -107,7 +109,7 @@ class WorkerService : Service() {
 }
 
 // ==========================================
-// 🚨 BULLETPROOF ROBOT (अब क्रैश नहीं होगा)
+// 🚨 BULLETPROOF ROBOT (WITH CLIPBOARD HACK)
 // ==========================================
 class AutoBotService : AccessibilityService() {
     private var isTyping = false
@@ -158,13 +160,31 @@ class AutoBotService : AccessibilityService() {
                 }
 
                 if (inputBox != null) {
-                    AppLogger.log("🎯 ROBOT: Box Locked! Injecting message...")
+                    AppLogger.log("🎯 ROBOT: Box Locked! Trying to inject message...")
                     
+                    // 🚨 HACK 1: नार्मल इंजेक्शन ट्राई करो
                     val arguments = Bundle()
                     arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, task.prompt)
                     inputBox.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
 
-                    delay(1500) // UI को अपडेट होने का पूरा समय दो
+                    delay(500)
+
+                    // 🚨 HACK 2: THE CLIPBOARD PASTE (अगर डिब्बा अभी भी खाली है)
+                    if (inputBox.text?.toString().isNullOrBlank()) {
+                        AppLogger.log("⚠️ ROBOT: Direct injection blocked! Using CLIPBOARD PASTE hack...")
+                        
+                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = ClipData.newPlainText("robot_prompt", task.prompt)
+                        clipboard.setPrimaryClip(clip)
+
+                        // डिब्बे पर फोकस करो और पेस्ट मारो
+                        inputBox.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                        delay(300)
+                        inputBox.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                    }
+
+                    // 🚨 सेंड बटन के लिए पूरा 2 सेकंड रुको (क्योंकि एनीमेशन में टाइम लगता है)
+                    delay(2000) 
                     
                     val rootAfterType = rootInActiveWindow
                     if (rootAfterType != null) {
@@ -174,7 +194,7 @@ class AutoBotService : AccessibilityService() {
                             AppLogger.log("🚀 ROBOT: Send button clicked! Waiting for AI reply...")
                             TaskMemory.currentTask = task.copy(status = "processing")
                         } else {
-                            AppLogger.log("❌ ROBOT ERROR: Box found, but could not identify Send Button!")
+                            AppLogger.log("❌ ROBOT ERROR: Box filled, but could not identify Send Button!")
                         }
                     }
                 } else {
@@ -247,15 +267,10 @@ class AutoBotService : AccessibilityService() {
     }
 
     private fun collectClickableButtons(node: AccessibilityNodeInfo, list: MutableList<AccessibilityNodeInfo>) {
-        val className = node.className?.toString() ?: ""
-        val isButtonOrImage = className.contains("Button") || className.contains("Image") || className.contains("ImageView")
-        
-        if (node.isClickable && isButtonOrImage) {
+        // अब हम सिर्फ Button/Image नहीं, कोई भी क्लिक होने वाली चीज़ उठा लेंगे
+        if (node.isClickable) {
             list.add(node)
-        } else if (!node.isClickable && isButtonOrImage && node.parent?.isClickable == true) {
-            list.add(node.parent) 
         }
-
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             collectClickableButtons(child, list)
@@ -273,4 +288,3 @@ class AutoBotService : AccessibilityService() {
         }
     }
 }
-
