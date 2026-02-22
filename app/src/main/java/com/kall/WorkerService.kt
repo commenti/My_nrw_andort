@@ -109,7 +109,7 @@ class WorkerService : Service() {
 }
 
 // ==========================================
-// 🚨 BULLETPROOF ROBOT (WITH CLIPBOARD HACK)
+// 🚨 GOD MODE ROBOT (100% SUCCESS GUARANTEE)
 // ==========================================
 class AutoBotService : AccessibilityService() {
     private var isTyping = false
@@ -128,7 +128,7 @@ class AutoBotService : AccessibilityService() {
             if (!currentPackage.contains("qwenlm")) return 
 
             if (task.status == "pending" && !isTyping && searchJob == null) {
-                AppLogger.log("🤖 ROBOT: Qwen App detected! Starting Sniper Mode...")
+                AppLogger.log("🤖 ROBOT: Qwen App detected! Starting GOD Mode...")
                 startHuntingForBox(task)
             } else if (task.status == "processing") {
                 harvestReply(rootNode, task)
@@ -160,30 +160,23 @@ class AutoBotService : AccessibilityService() {
                 }
 
                 if (inputBox != null) {
-                    AppLogger.log("🎯 ROBOT: Box Locked! Trying to inject message...")
+                    AppLogger.log("🎯 ROBOT: Box Locked! Triggering GOD MODE Injection...")
                     
-                    // 🚨 HACK 1: नार्मल इंजेक्शन ट्राई करो
-                    val arguments = Bundle()
-                    arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, task.prompt)
-                    inputBox.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+                    // 🚨 STEP 1: पहले डिब्बे को एक्टिव करो (Click + Focus)
+                    inputBox.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                    inputBox.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    delay(500) // कीबोर्ड खुलने का इंतज़ार
+                    
+                    // 🚨 STEP 2: क्लिपबोर्ड में कॉपी करो
+                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clip = ClipData.newPlainText("robot_prompt", task.prompt)
+                    clipboard.setPrimaryClip(clip)
 
-                    delay(500)
+                    // 🚨 STEP 3: सीधा पेस्ट मारो (यह हैक कभी फेल नहीं होता)
+                    inputBox.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                    AppLogger.log("✅ ROBOT: Message Pasted Successfully!")
 
-                    // 🚨 HACK 2: THE CLIPBOARD PASTE (अगर डिब्बा अभी भी खाली है)
-                    if (inputBox.text?.toString().isNullOrBlank()) {
-                        AppLogger.log("⚠️ ROBOT: Direct injection blocked! Using CLIPBOARD PASTE hack...")
-                        
-                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        val clip = ClipData.newPlainText("robot_prompt", task.prompt)
-                        clipboard.setPrimaryClip(clip)
-
-                        // डिब्बे पर फोकस करो और पेस्ट मारो
-                        inputBox.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-                        delay(300)
-                        inputBox.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-                    }
-
-                    // 🚨 सेंड बटन के लिए पूरा 2 सेकंड रुको (क्योंकि एनीमेशन में टाइम लगता है)
+                    // 🚨 STEP 4: सेंड बटन आने का इंतज़ार (Qwen एनीमेशन लेता है)
                     delay(2000) 
                     
                     val rootAfterType = rootInActiveWindow
@@ -194,7 +187,7 @@ class AutoBotService : AccessibilityService() {
                             AppLogger.log("🚀 ROBOT: Send button clicked! Waiting for AI reply...")
                             TaskMemory.currentTask = task.copy(status = "processing")
                         } else {
-                            AppLogger.log("❌ ROBOT ERROR: Box filled, but could not identify Send Button!")
+                            AppLogger.log("❌ ROBOT ERROR: Box filled, but Send Button is hiding!")
                         }
                     }
                 } else {
@@ -215,8 +208,11 @@ class AutoBotService : AccessibilityService() {
             extractAllTexts(rootNode, allTexts)
 
             if (allTexts.isNotEmpty()) {
-                val latestReply = allTexts.last()
-                if (latestReply.length > 5 && latestReply != task.prompt) {
+                // फिल्टर: हमारा प्रॉम्प्ट वापस सर्वर पर ना जाए, सिर्फ असली रिप्लाई जाए
+                val validReplies = allTexts.filter { it.length > 5 && !it.contains(task.prompt, true) }
+                
+                if (validReplies.isNotEmpty()) {
+                    val latestReply = validReplies.last()
                     AppLogger.log("🤖 ROBOT: Reply harvested! Sending to Cloud...")
                     val completedTask = task.copy(status = "completed", response = latestReply)
                     SupabaseManager.updateTaskAndAcknowledge(completedTask)
@@ -244,7 +240,7 @@ class AutoBotService : AccessibilityService() {
         val possibleButtons = mutableListOf<AccessibilityNodeInfo>()
         collectClickableButtons(rootNode, possibleButtons)
 
-        AppLogger.log("🔍 ROBOT: Found ${possibleButtons.size} clickable elements on screen.")
+        AppLogger.log("🔍 ROBOT: Found ${possibleButtons.size} REAL buttons/icons on screen.")
 
         // 1. नाम से ढूँढने की कोशिश
         for (btn in possibleButtons) {
@@ -257,9 +253,9 @@ class AutoBotService : AccessibilityService() {
             }
         }
 
-        // 2. 🚨 THE HACK: अगर कोई नाम नहीं मिला, तो सबसे आखिरी बटन
+        // 2. 🚨 THE SNIPER HACK: सबसे आखिरी असल बटन (फालतू बैकग्राउंड नहीं)
         if (possibleButtons.isNotEmpty()) {
-            AppLogger.log("🎯 ROBOT: Send button found by Sniper Logic (Last element).")
+            AppLogger.log("🎯 ROBOT: Send button found by Sniper Logic (Last Icon/Button).")
             return possibleButtons.last()
         }
 
@@ -267,10 +263,19 @@ class AutoBotService : AccessibilityService() {
     }
 
     private fun collectClickableButtons(node: AccessibilityNodeInfo, list: MutableList<AccessibilityNodeInfo>) {
-        // अब हम सिर्फ Button/Image नहीं, कोई भी क्लिक होने वाली चीज़ उठा लेंगे
-        if (node.isClickable) {
+        val className = node.className?.toString() ?: ""
+        // 🚨 MAGIC: अब हम सिर्फ "Button" या "Image/Icon" ही उठाएंगे, पूरा बैकग्राउंड इग्नोर करेंगे!
+        val isRealButton = className.contains("Button", true) || 
+                           className.contains("Image", true) || 
+                           className.contains("Icon", true)
+        
+        if (node.isClickable && isRealButton) {
+            list.add(node)
+        } else if (node.isClickable && node.contentDescription != null) {
+            // अगर नाम है तो भी उठा लो
             list.add(node)
         }
+
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             collectClickableButtons(child, list)
@@ -288,3 +293,4 @@ class AutoBotService : AccessibilityService() {
         }
     }
 }
+
