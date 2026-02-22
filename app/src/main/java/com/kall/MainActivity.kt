@@ -22,8 +22,8 @@ import java.lang.ref.WeakReference
 /**
  * ARCHITECTURE CONTRACT: MainActivity.kt
  * Role: The Executor (Headless WebView & State Machine).
- * Logic: Receives Task -> Injects JS -> Observes DOM -> Returns Result.
- * UPDATE: Added Boot Immortality Script injection to prevent network sleep.
+ * Logic: Receives Task -> Health Check -> Reload (If Dead) -> Wait -> Injects JS -> Observes DOM.
+ * UPDATE: Implemented User's "Smart Pre-Flight Check & Reload" Logic to beat Deep Sleep.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -89,7 +89,6 @@ class MainActivity : AppCompatActivity() {
             cookieManager.setAcceptCookie(true)
             cookieManager.setAcceptThirdPartyCookies(this, true)
 
-            // 🚨 SECURITY FIX: WeakReference पास कर रहे हैं ताकि Memory Leak न हो
             addJavascriptInterface(NeuroBridge(WeakReference(this@MainActivity)), "AndroidBridge")
 
             webViewClient = object : WebViewClient() {
@@ -98,11 +97,15 @@ class MainActivity : AppCompatActivity() {
                     CookieManager.getInstance().flush()
                     isPageLoaded = true
                     
-                    // 🚨 NEW HACK: पेज लोड होते ही ऐप को अमर और नेटवर्क को एक्टिव करने वाली स्क्रिप्ट चलाएं
                     view?.evaluateJavascript(JsInjector.BOOT_IMMORTALITY_SCRIPT, null)
 
                     Log.i(TAG, "STATE: Engine Ready. Page Fully Loaded.")
-                    currentTask?.let { executeTask(it) }
+                    
+                    // 🚨 WAIT & EXECUTE LOGIC: अगर कोई टास्क पेंडिंग है, तो लोड होने के बाद चलाएं
+                    currentTask?.let { 
+                        Log.i(TAG, "STATE: Page refreshed successfully. Executing buffered task ${it.id} now.")
+                        executeTask(it) 
+                    }
                 }
 
                 override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
@@ -113,10 +116,40 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl(TARGET_URL)
     }
 
+    // ==========================================
+    // 🚨 USER'S BRILLIANT LOGIC: SMART CHECK & RELOAD
+    // ==========================================
     fun onNewTaskReceived(task: InteractionTask) {
         runOnUiThread {
+            Log.i(TAG, "SIGNAL: New Task ${task.id} incoming.")
             currentTask = task
-            if (isPageLoaded) executeTask(task)
+            
+            // ज़बरदस्ती WebView को जगाने की कोशिश
+            webView.resumeTimers()
+
+            if (isPageLoaded) {
+                Log.i(TAG, "CHECK: Verifying if App/WebView is ALIVE and DOM is ready...")
+                
+                // यह JS कोड चेक करेगा कि वेबसाइट का चैट बॉक्स अभी मौजूद है या स्लीप हो गया है
+                val healthCheckScript = "(function(){ return document.querySelector('textarea') !== null || document.querySelector('[contenteditable=\"true\"]') !== null; })();"
+                
+                webView.evaluateJavascript(healthCheckScript) { result ->
+                    if (result == "true") {
+                        Log.i(TAG, "STATUS: App is ALIVE ✅. Injecting message directly...")
+                        executeTask(task)
+                    } else {
+                        Log.w(TAG, "STATUS: App is ASLEEP or STALE ❌. Triggering Reload and Wait protocol...")
+                        // यूजर की डिमांड: पहले रीलोड करो, फिर वेट करो!
+                        isPageLoaded = false
+                        webView.reload() 
+                        // नोट: reload होने के बाद onPageFinished खुद-ब-खुद पेंडिंग टास्क को इंजेक्ट कर देगा!
+                    }
+                }
+            } else {
+                Log.w(TAG, "BUFFER: Page was already dead. Triggering fresh load...")
+                isPageLoaded = false
+                webView.reload()
+            }
         }
     }
 
@@ -178,7 +211,6 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
-// 🚨 SECURITY FIX: Static Nested Class (No implicit reference to MainActivity)
 class NeuroBridge(private val activityRef: WeakReference<MainActivity>) {
     
     @JavascriptInterface
