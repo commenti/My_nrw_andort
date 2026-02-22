@@ -1,4 +1,4 @@
-package com.kall // 🚨 FIX: 'P' को छोटा कर दिया गया है!
+package com.kall
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -17,7 +17,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
-import java.lang.ref.WeakReference // 🚨 NEW: Memory Leak रोकने के लिए
+import java.lang.ref.WeakReference
 
 /**
  * ARCHITECTURE CONTRACT: MainActivity.kt
@@ -126,7 +126,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ==========================================
-    // PUBLIC HANDLERS FOR THE BRIDGE (No more inner class issues)
+    // PUBLIC HANDLERS FOR THE BRIDGE
     // ==========================================
     
     fun handleInjectionSuccess() {
