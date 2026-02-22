@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -27,19 +28,18 @@ class WorkerService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
     private val CHANNEL_ID = "KallWorkerChannel"
-    private val TARGET_PACKAGE = "ai.qwenlm.chat.android" // 🚨 ASLI PACKAGE NAME
+    private val ALARM_CHANNEL_ID = "KallAlarmChannel"
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
+        createNotificationChannels()
         acquireWakeLock()
 
-        // 🚨 THE BRAIN: अब यह सर्विस 24/7 सुनेगी, Android इसे कभी सुला नहीं पाएगा!
         Log.d("Kall_Shield", "BOOT: Starting 24/7 Cloud Listener...")
         SupabaseManager.initializeNetworkListener { task ->
-            Log.i("Kall_Shield", "SIGNAL: New Task ${task.id} incoming. Waking up phone!")
+            Log.i("Kall_Shield", "SIGNAL: New Task ${task.id} incoming. Triggering Alarm Hack!")
             TaskMemory.currentTask = task
-            wakeUpScreenAndLaunchApp()
+            triggerFullScreenAlarm()
         }
     }
 
@@ -64,27 +64,34 @@ class WorkerService : Service() {
         ).apply { acquire(10 * 60 * 1000L) }
     }
 
-    private fun wakeUpScreenAndLaunchApp() {
+    // 🚨 THE HACK: Android 15 के बैकग्राउंड ब्लॉक को तोड़ने के लिए Full-Screen Intent
+    private fun triggerFullScreenAlarm() {
         try {
-            // 1. स्क्रीन जलाओ
-            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            val screenLock = powerManager.newWakeLock(
-                PowerManager.FULL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
-                "Kall::AutoWakeupLock"
-            )
-            screenLock.acquire(3000)
-
-            // 2. असली ऐप को ज़बरदस्ती ओपन करो
-            val intent = packageManager.getLaunchIntentForPackage(TARGET_PACKAGE)
-            if (intent != null) {
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                startActivity(intent)
-                Log.i("Kall_Shield", "LAUNCH: Opened target app -> $TARGET_PACKAGE")
-            } else {
-                Log.e("Kall_Shield", "ERROR: Target app not installed!")
+            val intent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             }
+            
+            val pendingIntent = PendingIntent.getActivity(
+                this, 0, intent, 
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val alarmNotification = NotificationCompat.Builder(this, ALARM_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_menu_info_details)
+                .setContentTitle("Incoming AI Task")
+                .setContentText("Waking up the system...")
+                .setPriority(NotificationCompat.PRIORITY_MAX) // सबसे हाई प्रायोरिटी
+                .setCategory(NotificationCompat.CATEGORY_ALARM) // Android को लगेगा अलार्म बज रहा है
+                .setFullScreenIntent(pendingIntent, true) // स्क्रीन पर जबरदस्ती फेकेगा
+                .setAutoCancel(true)
+                .build()
+
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.notify(99, alarmNotification)
+            
+            Log.i("Kall_Shield", "HACK: Full-Screen Intent Fired! MainActivity should pop up now.")
         } catch (e: Exception) {
-            Log.e("Kall_Shield", "LAUNCH ERROR: ${e.message}")
+            Log.e("Kall_Shield", "ALARM HACK ERROR: ${e.message}")
         }
     }
 
@@ -93,16 +100,22 @@ class WorkerService : Service() {
         wakeLock?.let { if (it.isHeld) it.release() }
     }
 
-    private fun createNotificationChannel() {
+    private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(NotificationManager::class.java)
+            
             val serviceChannel = NotificationChannel(CHANNEL_ID, "Kall Worker", NotificationManager.IMPORTANCE_LOW)
-            getSystemService(NotificationManager::class.java).createNotificationChannel(serviceChannel)
+            manager.createNotificationChannel(serviceChannel)
+            
+            // अलार्म के लिए हाई प्रायोरिटी चैनल
+            val alarmChannel = NotificationChannel(ALARM_CHANNEL_ID, "Kall Alarm", NotificationManager.IMPORTANCE_HIGH)
+            manager.createNotificationChannel(alarmChannel)
         }
     }
 }
 
 // ==========================================
-// 2. THE INVISIBLE ROBOT (Smart Eyes Added)
+// 2. THE INVISIBLE ROBOT
 // ==========================================
 class AutoBotService : AccessibilityService() {
 
@@ -113,11 +126,8 @@ class AutoBotService : AccessibilityService() {
         val task = TaskMemory.currentTask ?: return
         val rootNode = rootInActiveWindow ?: return
 
-        // 🚨 SAFETY LOCK: चेक करो कि क्या सामने सच में Qwen ऐप है? (डायलपैड इग्नोर करेगा)
         val currentPackage = rootNode.packageName?.toString() ?: ""
-        if (!currentPackage.contains("qwenlm")) {
-            return 
-        }
+        if (!currentPackage.contains("qwenlm")) return 
 
         if (task.status == "pending" && !isTyping) {
             executeInjection(rootNode, task)
@@ -139,7 +149,7 @@ class AutoBotService : AccessibilityService() {
             inputBox.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
 
             CoroutineScope(Dispatchers.Main).launch {
-                delay(1000) // UI को अपडेट होने का समय दें
+                delay(1000)
                 val freshRoot = rootInActiveWindow
                 if (freshRoot != null) {
                     val sendBtn = findSendButton(freshRoot)
@@ -166,7 +176,7 @@ class AutoBotService : AccessibilityService() {
                 Log.i(TAG, "ROBOT: Reply Harvested! Sending back to Cloud...")
                 val completedTask = task.copy(status = "completed", response = latestReply)
                 SupabaseManager.updateTaskAndAcknowledge(completedTask)
-                TaskMemory.currentTask = null // रिप्लाई भेजने के बाद मेमोरी डिलीट कर दो
+                TaskMemory.currentTask = null 
             }
         }
     }
@@ -205,3 +215,4 @@ class AutoBotService : AccessibilityService() {
         }
     }
 }
+
