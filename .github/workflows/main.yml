@@ -21,17 +21,36 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # ARCHITECTURE UPDATE: Upgraded to v4 for faster caching & Node 20 support
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.2"
 
-      # Added --info flag for deep logging
-      - name: Compile and Assemble APK
-        run: gradle assembleDebug --stacktrace --info --no-daemon
+      # 🚨 SPY AGENT INJECTED HERE: यह बिल्ड भी करेगा और फेल होने पर एरर भी निकालेगा!
+      - name: Compile, Assemble & Spy Agent 🕵️‍♂️
+        run: |
+          echo "Starting build and capturing logs..."
+          gradle assembleDebug --stacktrace --info --no-daemon > full_build_log.txt 2>&1 || {
+            echo "❌ Build Failed! Spy Agent is extracting the error..."
+            echo "### 🕵️‍♂️ Spy Agent Error Report" >> $GITHUB_STEP_SUMMARY
+            echo "मुझे तुम्हारे कोड में ये असली मुजरिम मिले हैं:" >> $GITHUB_STEP_SUMMARY
+            echo '```text' >> $GITHUB_STEP_SUMMARY
+            grep -E "^e: " full_build_log.txt >> $GITHUB_STEP_SUMMARY || true
+            grep -A 3 -i "AAPT: error:" full_build_log.txt >> $GITHUB_STEP_SUMMARY || true
+            grep -E "Execution failed for task" full_build_log.txt >> $GITHUB_STEP_SUMMARY || true
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1 
+          }
 
-      # 🚨 NEW EMERGENCY PROTOCOL: Catching the exact error if AAPT2 or Kotlin fails
+      # जासूस का पूरा लॉग सेव करने के लिए (ताकि हम गहराई से चेक कर सकें)
+      - name: Upload Spy Agent Full Log (On Failure)
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: spy-agent-full-log
+          path: full_build_log.txt
+          retention-days: 3
+
       - name: Upload Build Reports (On Failure)
         uses: actions/upload-artifact@v4
         if: failure()
