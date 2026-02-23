@@ -3,87 +3,109 @@ package com.kall
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
+data class InteractionTask(
+    val id: String,
+    val prompt: String,
+    var status: String,
+    var response: String? = null
+)
+
 /**
  * ARCHITECTURE CONTRACT: SupabaseManager (The Nervous System)
- * Version: 4.0 (100% PURE REST API - ZERO EXTERNAL DEPENDENCIES)
- * Logic: Bypasses all GitHub/Gradle compilation errors using Android's native HttpURLConnection.
- * Compatibility: Android 14, 15, 16+ Fully Supported.
+ * Version: 4.1 (Production - Hardened REST Polling)
  */
 object SupabaseManager {
 
     private const val TAG = "Kall_NervousSystem"
     private const val TABLE_QUEUE = "ai_tasks"
 
+    // FIXME: Migrate to BuildConfig.SUPABASE_URL in production
     private const val SUPABASE_URL = "https://aeopowovqksexgvseiyq.supabase.co"
     private const val SUPABASE_KEY = "sb_publishable_HX5GTYwHATs3gTksy-ZV9w_AQNIfM7t"
 
-    private val networkScope = CoroutineScope(Dispatchers.IO + Job())
+    private const val TIMEOUT_MS = 10000 // 10 seconds timeout to prevent thread hanging
+
+    // Use SupervisorJob to prevent one failed request from killing the entire polling scope
+    private val networkScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     fun initializeNetworkListener(onNewTask: (InteractionTask) -> Unit) {
-        Log.i(TAG, "SYSTEM BOOT: Initializing 100% Pure Native REST Polling...")
+        Log.i(TAG, "SYSTEM BOOT: Initializing Hardened REST Polling...")
 
-        // ==========================================
-        // 🚨 PURE HTTP POLLING (NO WEBSOCKET CRASHES OR BUILD ERRORS)
-        // ==========================================
-        networkScope.launch(Dispatchers.IO) {
+        networkScope.launch {
             while (true) {
-                try {
-                    val url = URL("$SUPABASE_URL/rest/v1/$TABLE_QUEUE?status=eq.pending")
-                    val connection = url.openConnection() as HttpURLConnection
-                    connection.requestMethod = "GET"
-                    connection.setRequestProperty("apikey", SUPABASE_KEY)
-                    connection.setRequestProperty("Authorization", "Bearer $SUPABASE_KEY")
-                    connection.setRequestProperty("Accept", "application/json")
-                    
-                    if (connection.responseCode == 200) {
-                        val responseStr = connection.inputStream.bufferedReader().use { it.readText() }
-                        val jsonArray = JSONArray(responseStr)
-                        
-                        if (jsonArray.length() > 0) {
-                            val firstObj = jsonArray.getJSONObject(0)
-                            val task = InteractionTask(
-                                id = firstObj.optString("id", ""),
-                                prompt = firstObj.optString("prompt", ""),
-                                status = "pending"
-                            )
-                            
-                            if (task.id.isNotEmpty()) {
-                                // टास्क को लॉक करो (ताकि कोई और वर्कर न उठा ले)
-                                if (lockTask(task.id)) {
-                                    Log.i(TAG, "POLLING: Picked up heavy payload task directly via REST API.")
-                                    onNewTask(task)
-                                }
-                            }
-                        }
-                    }
-                    connection.disconnect()
-                } catch (e: Exception) {
-                    // साइलेंट इग्नोर (इंटरनेट फ्लक्चुएशन पर ऐप क्रैश न हो)
-                }
-                // हर 2.5 सेकंड में नया टास्क चेक करेगा (Network optimized)
-                delay(2500) 
+                fetchPendingTask(onNewTask)
+                delay(2500) // 2.5s Polling Interval
             }
         }
     }
 
-    // ==========================================
-    // 🚨 NATIVE HTTP PATCH (TASK LOCKING)
-    // ==========================================
+    private fun fetchPendingTask(onNewTask: (InteractionTask) -> Unit) {
+        var connection: HttpURLConnection? = null
+        try {
+            val url = URL("$SUPABASE_URL/rest/v1/$TABLE_QUEUE?select=id,prompt&status=eq.pending&limit=1")
+            connection = url.openConnection() as HttpURLConnection
+            
+            connection.requestMethod = "GET"
+            connection.connectTimeout = TIMEOUT_MS
+            connection.readTimeout = TIMEOUT_MS
+            
+            connection.setRequestProperty("apikey", SUPABASE_KEY)
+            connection.setRequestProperty("Authorization", "Bearer $SUPABASE_KEY")
+            connection.setRequestProperty("Accept", "application/json")
+
+            if (connection.responseCode == 200) {
+                val responseStr = readStream(connection.inputStream)
+                val jsonArray = JSONArray(responseStr)
+
+                if (jsonArray.length() > 0) {
+                    val firstObj = jsonArray.getJSONObject(0)
+                    
+                    // Strict validation: Reject if ID or Prompt is missing/empty
+                    val id = firstObj.optString("id", "").trim()
+                    val prompt = firstObj.optString("prompt", "").trim()
+
+                    if (id.isNotEmpty() && prompt.isNotEmpty()) {
+                        Log.i(TAG, "POLLING: Found pending task: $id | Payload size: ${prompt.length} chars")
+                        
+                        val task = InteractionTask(id = id, prompt = prompt, status = "pending")
+                        
+                        if (lockTask(task.id)) {
+                            Log.i(TAG, "POLLING: Task locked successfully. Dispatching to worker.")
+                            onNewTask(task)
+                        }
+                    } else {
+                        Log.w(TAG, "POLLING: Fetched task has empty ID or Prompt. Ignoring.")
+                    }
+                }
+            } else {
+                Log.w(TAG, "POLLING HTTP ERROR: ${connection.responseCode}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "POLLING EXCEPTION: ${e.message}")
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
     private fun lockTask(taskId: String): Boolean {
+        var connection: HttpURLConnection? = null
         return try {
             val url = URL("$SUPABASE_URL/rest/v1/$TABLE_QUEUE?id=eq.$taskId&status=eq.pending")
-            val connection = url.openConnection() as HttpURLConnection
+            connection = url.openConnection() as HttpURLConnection
             
-            // HTTP PATCH जुगाड़ (Native Android के लिए)
             connection.requestMethod = "POST"
+            connection.connectTimeout = TIMEOUT_MS
+            connection.readTimeout = TIMEOUT_MS
+            
             connection.setRequestProperty("X-HTTP-Method-Override", "PATCH")
             connection.setRequestProperty("apikey", SUPABASE_KEY)
             connection.setRequestProperty("Authorization", "Bearer $SUPABASE_KEY")
@@ -91,69 +113,79 @@ object SupabaseManager {
             connection.setRequestProperty("Prefer", "return=representation")
             connection.doOutput = true
 
-            val jsonBody = JSONObject()
-            jsonBody.put("status", "processing")
+            val jsonBody = JSONObject().apply {
+                put("status", "processing")
+            }
 
             connection.outputStream.use { os ->
-                os.write(jsonBody.toString().toByteArray())
+                os.write(jsonBody.toString().toByteArray(Charsets.UTF_8))
             }
 
-            val isSuccess = if (connection.responseCode in 200..299) {
-                val responseStr = connection.inputStream.bufferedReader().use { it.readText() }
+            if (connection.responseCode in 200..299) {
+                val responseStr = readStream(connection.inputStream)
                 val jsonArray = JSONArray(responseStr)
-                jsonArray.length() > 0 // अगर Row अपडेट हुई है तो true
+                val success = jsonArray.length() > 0
+                if (success) Log.i(TAG, "LOCK: Task $taskId is securely locked.")
+                success
             } else {
+                Log.e(TAG, "LOCK FAILED: HTTP ${connection.responseCode}")
                 false
             }
-            
-            connection.disconnect()
-            
-            if (isSuccess) Log.i(TAG, "LOCK: Task $taskId is securely locked by Android App.")
-            isSuccess
-            
         } catch (e: Exception) {
-            Log.e(TAG, "LOCK ERROR: Task $taskId might be taken - ${e.message}")
+            Log.e(TAG, "LOCK EXCEPTION: Task $taskId lock failed - ${e.message}")
             false
+        } finally {
+            connection?.disconnect()
         }
     }
 
-    // ==========================================
-    // 🚨 NATIVE HTTP PATCH (TASK COMPLETION & EXTRACTION)
-    // ==========================================
     fun updateTaskAndAcknowledge(task: InteractionTask) {
-        networkScope.launch(Dispatchers.IO) {
+        networkScope.launch {
+            var connection: HttpURLConnection? = null
             try {
                 val url = URL("$SUPABASE_URL/rest/v1/$TABLE_QUEUE?id=eq.${task.id}")
-                val connection = url.openConnection() as HttpURLConnection
+                connection = url.openConnection() as HttpURLConnection
                 
                 connection.requestMethod = "POST"
+                connection.connectTimeout = TIMEOUT_MS
+                connection.readTimeout = TIMEOUT_MS
+                
                 connection.setRequestProperty("X-HTTP-Method-Override", "PATCH")
                 connection.setRequestProperty("apikey", SUPABASE_KEY)
                 connection.setRequestProperty("Authorization", "Bearer $SUPABASE_KEY")
                 connection.setRequestProperty("Content-Type", "application/json")
                 connection.doOutput = true
 
-                // शुद्ध JSON को Supabase पर वापस भेजना
-                val jsonBody = JSONObject()
-                jsonBody.put("status", task.status)
-                if (task.response != null) {
-                    jsonBody.put("response", task.response)
+                val jsonBody = JSONObject().apply {
+                    put("status", task.status)
+                    task.response?.let { put("response", it) }
                 }
 
                 connection.outputStream.use { os ->
-                    os.write(jsonBody.toString().toByteArray())
+                    os.write(jsonBody.toString().toByteArray(Charsets.UTF_8))
                 }
 
                 if (connection.responseCode in 200..299) {
-                    Log.i(TAG, "SUCCESS: Task ${task.id} structured JSON successfully pushed to cloud.")
+                    Log.i(TAG, "SUCCESS: Task ${task.id} updated to '${task.status}' on cloud.")
                 } else {
-                    Log.e(TAG, "DB ERROR: Failed to acknowledge task ${task.id} - HTTP ${connection.responseCode}")
+                    val errorStr = readStream(connection.errorStream)
+                    Log.e(TAG, "DB ERROR: Failed to ack task ${task.id} - HTTP ${connection.responseCode} | $errorStr")
                 }
-                
-                connection.disconnect()
             } catch (e: Exception) {
-                Log.e(TAG, "DB ERROR: ${e.message}")
+                Log.e(TAG, "ACK EXCEPTION: ${e.message}")
+            } finally {
+                connection?.disconnect()
             }
         }
     }
+
+    private fun readStream(inputStream: InputStream?): String {
+        if (inputStream == null) return ""
+        return try {
+            inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        } catch (e: Exception) {
+            ""
+        }
+    }
 }
+
