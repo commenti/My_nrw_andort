@@ -1,6 +1,7 @@
 package com.kall
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -10,6 +11,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Path
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -109,14 +112,14 @@ class WorkerService : Service() {
 }
 
 // ==========================================
-// 🚨 CRASH-PROOF ROBOT (NO STALE NODES)
+// 🚨 MATHEMATICAL HACKER ROBOT (X/Y TAP)
 // ==========================================
 class AutoBotService : AccessibilityService() {
     private var isTyping = false
     private var searchJob: kotlinx.coroutines.Job? = null
 
     override fun onServiceConnected() {
-        AppLogger.log("🟢 ROBOT: Service Connected & 100% Alive!")
+        AppLogger.log("🟢 ROBOT: Hacker Mode Activated!")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -128,7 +131,7 @@ class AutoBotService : AccessibilityService() {
             if (!currentPackage.contains("qwenlm")) return 
 
             if (task.status == "pending" && !isTyping && searchJob == null) {
-                AppLogger.log("🤖 ROBOT: Qwen App detected! Starting Injection Process...")
+                AppLogger.log("🤖 ROBOT: Starting Math/Coordinate Injection...")
                 startHuntingForBox(task)
             } else if (task.status == "processing") {
                 harvestReply(rootNode, task)
@@ -147,64 +150,77 @@ class AutoBotService : AccessibilityService() {
                 var attempts = 0
                 var injected = false
                 
-                while (!injected && attempts < 12) {
+                while (!injected && attempts < 10) {
                     val root = rootInActiveWindow
                     val inputBox = if (root != null) findEditableNode(root) else null
 
                     if (inputBox != null) {
-                        AppLogger.log("🎯 ROBOT: Box Locked! Copying text & clicking...")
+                        AppLogger.log("🎯 ROBOT: Box Locked! Applying Clipboard Paste...")
                         
-                        // 1. क्लिपबोर्ड में कॉपी करो
                         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         val clip = ClipData.newPlainText("robot_prompt", task.prompt)
                         clipboard.setPrimaryClip(clip)
 
-                        // 2. फोकस करो और क्लिक करो ताकि कीबोर्ड खुले
                         inputBox.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
                         inputBox.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        
-                        // 🚨 3. कीबोर्ड खुलने का 1 सेकंड इंतज़ार करो
                         delay(1000) 
                         
-                        // 🚨 4. CRITICAL FIX: डिब्बा दोबारा ढूंढो (क्योंकि पुराना डिब्बा Dead हो चुका है)
                         val rootAfterKeyboard = rootInActiveWindow
                         val freshBox = if (rootAfterKeyboard != null) findEditableNode(rootAfterKeyboard) else null
 
                         if (freshBox != null) {
                             freshBox.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-                            AppLogger.log("✅ ROBOT: Message Pasted Successfully!")
+                            AppLogger.log("✅ ROBOT: Text Pasted! Preparing Hacker Tap...")
+                            
+                            delay(1500) // टेक्स्ट प्रोसेस होने दो
+                            
+                            // 🧮 MATHEMATICAL CALCULATION FOR SEND BUTTON
+                            val rect = Rect()
+                            freshBox.getBoundsInScreen(rect)
+                            
+                            val screenWidth = resources.displayMetrics.widthPixels
+                            // Y: डिब्बे का बिल्कुल सेंटर
+                            val targetY = rect.centerY().toFloat()
+                            // X: स्क्रीन के दाएं कोने से 80 पिक्सल पीछे (यहीं सेंड बटन होता है)
+                            val targetX = (screenWidth - 80).toFloat()
 
-                            // 🚨 5. सेंड बटन आने का 2 सेकंड इंतज़ार करो
-                            delay(2000) 
+                            AppLogger.log("🧮 MATH: Calculated Send Coord -> X:$targetX, Y:$targetY")
                             
-                            val rootAfterPaste = rootInActiveWindow
-                            val sendBtn = if (rootAfterPaste != null) findSendButton(rootAfterPaste) else null
-                            
-                            if (sendBtn != null) {
-                                sendBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                                AppLogger.log("🚀 ROBOT: Send button clicked! Waiting for AI reply...")
-                                TaskMemory.currentTask = task.copy(status = "processing")
-                                injected = true // लूप बंद करो
-                            } else {
-                                AppLogger.log("❌ ROBOT ERROR: Box filled, but Send Button is hiding!")
-                                injected = true // लूप बंद करो, क्योंकि टेक्स्ट पेस्ट हो चुका है
-                            }
-                        } else {
-                            AppLogger.log("❌ ROBOT ERROR: Box disappeared after clicking!")
+                            performTap(targetX, targetY) // सीधा स्क्रीन पर उंगली मारो!
+
+                            AppLogger.log("🚀 ROBOT: Target Clicked! Waiting for reply...")
+                            TaskMemory.currentTask = task.copy(status = "processing")
+                            injected = true 
                         }
                     } else {
-                        AppLogger.log("👀 ROBOT: Searching for text box... (Attempt ${attempts + 1}/12)")
+                        AppLogger.log("👀 ROBOT: Searching for box... (${attempts + 1}/10)")
                         delay(1000)
                         attempts++
                     }
                 }
             } catch (e: Exception) {
-                AppLogger.log("❌ HUNTER CRASH PREVENTED: ${e.message}")
+                AppLogger.log("❌ CRASH PREVENTED: ${e.message}")
             } finally {
                 isTyping = false
                 searchJob = null 
             }
         }
+    }
+
+    // 👆 THE RAW SCREEN TAPPER
+    private fun performTap(x: Float, y: Float) {
+        val path = Path()
+        path.moveTo(x, y)
+        val builder = GestureDescription.Builder()
+        builder.addStroke(GestureDescription.StrokeDescription(path, 0, 100))
+        dispatchGesture(builder.build(), object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                AppLogger.log("👆 HACKER TAP: Screen officially touched at X/Y!")
+            }
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                AppLogger.log("❌ HACKER TAP FAILED!")
+            }
+        }, null)
     }
 
     private fun harvestReply(rootNode: AccessibilityNodeInfo, task: InteractionTask) {
@@ -213,18 +229,21 @@ class AutoBotService : AccessibilityService() {
             extractAllTexts(rootNode, allTexts)
 
             if (allTexts.isNotEmpty()) {
-                val validReplies = allTexts.filter { it.length > 5 && !it.contains(task.prompt, true) }
+                // 🚨 FILTER: सिर्फ वो रिप्लाई उठाओ जो हमारे भेजे हुए मैसेज से अलग हों
+                val validReplies = allTexts.filter { 
+                    it.length > 5 && !it.contains(task.prompt, ignoreCase = true) 
+                }
                 
                 if (validReplies.isNotEmpty()) {
                     val latestReply = validReplies.last()
-                    AppLogger.log("🤖 ROBOT: Reply harvested! Sending to Cloud...")
+                    AppLogger.log("🤖 ROBOT: Real Reply Harvested! Sending to Cloud...")
                     val completedTask = task.copy(status = "completed", response = latestReply)
                     SupabaseManager.updateTaskAndAcknowledge(completedTask)
                     TaskMemory.currentTask = null 
                 }
             }
         } catch (e: Exception) {
-            AppLogger.log("❌ HARVEST CRASH PREVENTED: ${e.message}")
+            AppLogger.log("❌ HARVEST ERROR: ${e.message}")
         }
     }
 
@@ -238,44 +257,6 @@ class AutoBotService : AccessibilityService() {
             if (found != null) return found
         }
         return null
-    }
-
-    private fun findSendButton(rootNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        val possibleButtons = mutableListOf<AccessibilityNodeInfo>()
-        collectClickableButtons(rootNode, possibleButtons)
-
-        for (btn in possibleButtons) {
-            val desc = btn.contentDescription?.toString()?.lowercase() ?: ""
-            val text = btn.text?.toString()?.lowercase() ?: ""
-            if (desc.contains("send") || desc.contains("submit") || desc.contains("arrow") || 
-                desc.contains("up") || text.contains("send") || desc.contains("post") || desc.contains("भेजें")) {
-                return btn
-            }
-        }
-
-        if (possibleButtons.isNotEmpty()) {
-            return possibleButtons.last() // THE SNIPER HACK
-        }
-
-        return null
-    }
-
-    private fun collectClickableButtons(node: AccessibilityNodeInfo, list: MutableList<AccessibilityNodeInfo>) {
-        val className = node.className?.toString() ?: ""
-        val isRealButton = className.contains("Button", true) || 
-                           className.contains("Image", true) || 
-                           className.contains("Icon", true)
-        
-        if (node.isClickable && isRealButton) {
-            list.add(node)
-        } else if (node.isClickable && node.contentDescription != null) {
-            list.add(node)
-        }
-
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            collectClickableButtons(child, list)
-        }
     }
 
     private fun extractAllTexts(node: AccessibilityNodeInfo, list: MutableList<String>) {
