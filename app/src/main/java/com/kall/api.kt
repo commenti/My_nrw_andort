@@ -1,12 +1,13 @@
 package com.kall
 
+import android.util.Base64
 import kotlinx.serialization.Serializable
 
 /**
  * ARCHITECTURE CONTRACT: api.kt
  * Role: Data Models & JavaScript Injection Utilities (Stateless)
  * Constraints: No Android Context, No State, No Network calls.
- * UPDATE: Architecture Aligned for Android 15+ with Chunked Injection & Deep Sleep Prevention.
+ * UPDATE: Base64 Payload Encryption added for 50k+ massive prompts (Zero Crash Guarantee).
  */
 
 // ==========================================
@@ -64,14 +65,10 @@ object JsInjector {
         })();
     """.trimIndent()
 
-    // 🚨 2. CHUNKED INJECTION SCRIPT: ट्रक को छोटे पैकेट में डालकर भेजना
+    // 🚨 2. CHUNKED INJECTION SCRIPT (WITH BASE64 DECODER): बड़े डेटा को सुरक्षित डालना
     fun buildDispatchScript(rawPrompt: String): String {
-        // प्रॉम्प्ट को JavaScript के लिए सुरक्षित बनाना
-        val safePrompt = rawPrompt
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "")
+        // प्रॉम्प्ट को Base64 में एन्कोड करें ताकि कोई JS Syntax Error ना आए
+        val base64Prompt = Base64.encodeToString(rawPrompt.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
 
         return """
             (function() {
@@ -82,17 +79,26 @@ object JsInjector {
                         return;
                     }
                     
-                    const fullText = "$safePrompt";
-                    const chunkSize = 1024; // 1024 कैरेक्टर्स का सुरक्षित चंक
+                    // Base64 को वापस ओरिजिनल टेक्स्ट में डिकोड करना (UTF-8 सपोर्ट के साथ)
+                    const b64 = "$base64Prompt";
+                    const binString = atob(b64);
+                    const bytes = new Uint8Array(binString.length);
+                    for (let i = 0; i < binString.length; i++) {
+                        bytes[i] = binString.charCodeAt(i);
+                    }
+                    const fullText = new TextDecoder('utf-8').decode(bytes);
+                    
+                    // 1024 कैरेक्टर्स के पैकेट्स बनाना
+                    const chunkSize = 1024; 
                     const chunks = [];
                     for (let i = 0; i < fullText.length; i += chunkSize) {
                         chunks.push(fullText.substring(i, i + chunkSize));
                     }
                     
-                    // बॉक्स खाली करना (React/Vue तरीके से)
+                    // डिब्बा खाली करना
                     if (inputEl.tagName.toLowerCase() === 'textarea') {
                         const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-                        setter.call(inputEl, "");
+                        if (setter) setter.call(inputEl, "");
                     } else {
                         inputEl.innerHTML = "";
                     }
@@ -100,7 +106,7 @@ object JsInjector {
 
                     let currentChunkIndex = 0;
 
-                    // चंक-वाइज़ इंजेक्शन लॉजिक (UI को फ्रीज़ होने से बचाने के लिए)
+                    // चंक-वाइज़ टाइपिंग (UI फ्रीज़ रोकने के लिए)
                     function injectNextChunk() {
                         if (currentChunkIndex < chunks.length) {
                             window.AndroidBridge.onChunkProgress(currentChunkIndex + 1, chunks.length);
@@ -109,16 +115,16 @@ object JsInjector {
                             
                             if (inputEl.tagName.toLowerCase() === 'textarea') {
                                 const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-                                setter.call(inputEl, inputEl.value + chunkText);
+                                if (setter) setter.call(inputEl, inputEl.value + chunkText);
                             } else {
                                 inputEl.innerHTML += chunkText;
                             }
                             
-                            // React/Vue को जगाने के लिए इवेंट्स फायर करना
+                            // React को अपडेट करने का सिग्नल
                             inputEl.dispatchEvent(new Event('input', { bubbles: true }));
                             
                             currentChunkIndex++;
-                            setTimeout(injectNextChunk, 20); // हर 20ms में अगला हिस्सा डालो
+                            setTimeout(injectNextChunk, 20); 
                         } else {
                             finalizeInjection();
                         }
@@ -128,8 +134,7 @@ object JsInjector {
                         inputEl.dispatchEvent(new Event('change', { bubbles: true }));
                         
                         setTimeout(() => {
-                            // सेंड बटन ढूंढना और दबाना
-                            let possibleBtns = Array.from(document.querySelectorAll('button')).filter(b => !b.disabled && b.querySelector('svg'));
+                            let possibleBtns = Array.from(document.querySelectorAll('button')).filter(b => !b.disabled && (b.querySelector('svg') || b.innerText.toLowerCase().includes('send')));
                             let sendBtn = document.querySelector('button[aria-label*="send" i], button[data-testid*="send" i]') 
                                           || possibleBtns[possibleBtns.length - 1]; 
                             
@@ -142,7 +147,7 @@ object JsInjector {
                         }, 1000);
                     }
 
-                    injectNextChunk(); // प्रक्रिया शुरू करें
+                    injectNextChunk();
 
                 } catch (e) {
                     window.AndroidBridge.onError('EXECUTION_ERROR: ' + e.message);
@@ -151,7 +156,7 @@ object JsInjector {
         """.trimIndent()
     }
 
-    // 🚨 3. DATA EXTRACTION SCRIPT: शुद्ध JSON बाहर निकालना
+    // 🚨 3. DATA EXTRACTION SCRIPT: सिर्फ शुद्ध JSON निकालना
     val HARVESTER_SCRIPT = """
         (function() {
             if (window.activeHarvester) clearInterval(window.activeHarvester);
@@ -161,7 +166,6 @@ object JsInjector {
             
             window.activeHarvester = setInterval(() => {
                 try {
-                    // Qwen के टाइपिंग इंडिकेटर्स और स्टॉप बटन्स चेक करना
                     const isTyping = document.querySelector('button[aria-label*="Stop"], .typing-indicator, [class*="typing"]') !== null;
                     const responseBlocks = document.querySelectorAll('.markdown-body, .prose, .message-content, div[data-message-author="assistant"], div[class*="content"]');
                     
@@ -173,7 +177,6 @@ object JsInjector {
                     if (latestResponse === '[]' || latestResponse === '' || latestResponse === '...') return; 
                     
                     if (!isTyping) {
-                        // अगर 5 सेकंड तक आउटपुट नहीं बदलता, तो मतलब AI का काम खत्म (Stability Lock)
                         if (latestResponse === lastContent) {
                             stabilityCounter++;
                         } else {
@@ -181,11 +184,11 @@ object JsInjector {
                             lastContent = latestResponse;
                         }
                         
+                        // 5 सेकंड तक आउटपुट स्थिर रहे तो एक्सट्रेक्ट करो
                         if (stabilityCounter >= 5) {
                             clearInterval(window.activeHarvester);
                             window.activeHarvester = null;
                             
-                            // REGEX: सिर्फ JSON को काटना
                             let finalJsonOutput = latestResponse;
                             const jsonRegex = /```(?:json)?\s*([\s\S]*?)```/i;
                             const match = latestResponse.match(jsonRegex);
@@ -209,7 +212,7 @@ object JsInjector {
                     clearInterval(window.activeHarvester);
                     window.AndroidBridge.onError('HARVEST_ERROR: ' + e.message);
                 }
-            }, 1000); // हर 1 सेकंड में चेक करेगा
+            }, 1000);
         })();
     """.trimIndent()
 }
