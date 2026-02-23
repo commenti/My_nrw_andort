@@ -7,7 +7,7 @@ import kotlinx.serialization.Serializable
  * ARCHITECTURE CONTRACT: api.kt
  * Role: Data Models & JavaScript Injection Utilities (Stateless)
  * Constraints: No Android Context, No State, No Network calls.
- * UPDATE: Added "Patience Lock" & "Thinking Detector" to stop harvesting old messages!
+ * UPDATE: Added React/Vue Virtual DOM Bypass Hack to ensure text is visible in WebView.
  */
 
 // ==========================================
@@ -49,31 +49,23 @@ object JsInjector {
                     document.body.dispatchEvent(new Event('mousemove', { bubbles: true }));
                 }, 15000);
             }
-
-            if (!window.errorObserverActive) {
-                window.errorObserverActive = true;
-                const observer = new MutationObserver(() => {
-                    const text = document.body.innerText.toLowerCase();
-                    if (text.includes('network error') || text.includes('failed to fetch')) {
-                        window.AndroidBridge.onError('DOM_ERROR: Network Timeout Detected');
-                        observer.disconnect(); 
-                    }
-                });
-                observer.observe(document.body, { childList: true, subtree: true });
-            }
         })();
     """.trimIndent()
 
-    // 🚨 2. CHUNKED INJECTION SCRIPT (बड़े डेटा को सुरक्षित डालना)
+    // 🚨 2. CHUNKED INJECTION SCRIPT (WITH REACT.JS BYPASS)
     fun buildDispatchScript(rawPrompt: String): String {
+        // प्रॉम्प्ट को Base64 में एन्कोड करें ताकि JSON का कोई ब्रैकेट JS को क्रैश न करे
         val base64Prompt = Base64.encodeToString(rawPrompt.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
 
         return """
             (function() {
                 try {
-                    let inputEl = document.querySelector('textarea') || document.querySelector('[contenteditable="true"]');
+                    // 🚨 HACK 1: सिर्फ वो डिब्बा ढूंढो जो स्क्रीन पर दिखाई दे रहा हो (Hidden को इग्नोर करो)
+                    const textareas = Array.from(document.querySelectorAll('textarea, [contenteditable="true"]'));
+                    const inputEl = textareas.find(el => el.offsetWidth > 0 && el.offsetHeight > 0);
+                    
                     if (!inputEl) {
-                        window.AndroidBridge.onError('DOM_ERROR: Input box not found');
+                        window.AndroidBridge.onError('DOM_ERROR: Visible Input box not found');
                         return;
                     }
                     
@@ -91,13 +83,30 @@ object JsInjector {
                         chunks.push(fullText.substring(i, i + chunkSize));
                     }
                     
-                    if (inputEl.tagName.toLowerCase() === 'textarea') {
-                        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-                        if (setter) setter.call(inputEl, "");
-                    } else {
-                        inputEl.innerHTML = "";
-                    }
                     inputEl.focus();
+
+                    // 🚨 HACK 2: React.js Bypass Setter (यह React को बेवकूफ बनाएगा)
+                    function setNativeValue(element, value) {
+                        if (element.tagName.toLowerCase() === 'textarea') {
+                            const valueSetter = Object.getOwnPropertyDescriptor(element, 'value').set;
+                            const prototype = Object.getPrototypeOf(element);
+                            const prototypeValueSetter = Object.getOwnPropertyDescriptor(prototype, 'value').set;
+                            
+                            if (valueSetter && valueSetter !== prototypeValueSetter) {
+                                prototypeValueSetter.call(element, value);
+                            } else {
+                                valueSetter.call(element, value);
+                            }
+                        } else {
+                            // ContentEditable के लिए
+                            document.execCommand('selectAll', false, null);
+                            document.execCommand('insertText', false, value);
+                        }
+                    }
+
+                    // पहले डिब्बा साफ करो
+                    setNativeValue(inputEl, "");
+                    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
 
                     let currentChunkIndex = 0;
 
@@ -106,14 +115,19 @@ object JsInjector {
                             window.AndroidBridge.onChunkProgress(currentChunkIndex + 1, chunks.length);
                             const chunkText = chunks[currentChunkIndex];
                             
+                            // चंक को जोड़ो और React को बताओ कि टाइपिंग हुई है
                             if (inputEl.tagName.toLowerCase() === 'textarea') {
-                                const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-                                if (setter) setter.call(inputEl, inputEl.value + chunkText);
+                                setNativeValue(inputEl, inputEl.value + chunkText);
                             } else {
-                                inputEl.innerHTML += chunkText;
+                                // कर्सर को आखिर में ले जाकर इंसर्ट करो
+                                const selection = window.getSelection();
+                                selection.selectAllChildren(inputEl);
+                                selection.collapseToEnd();
+                                document.execCommand('insertText', false, chunkText);
                             }
                             
                             inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+                            
                             currentChunkIndex++;
                             setTimeout(injectNextChunk, 20); 
                         } else {
@@ -125,17 +139,27 @@ object JsInjector {
                         inputEl.dispatchEvent(new Event('change', { bubbles: true }));
                         
                         setTimeout(() => {
-                            let possibleBtns = Array.from(document.querySelectorAll('button')).filter(b => !b.disabled && (b.querySelector('svg') || b.innerText.toLowerCase().includes('send')));
-                            let sendBtn = document.querySelector('button[aria-label*="send" i], button[data-testid*="send" i]') 
-                                          || possibleBtns[possibleBtns.length - 1]; 
+                            // 🚨 सेंड बटन ढूंढने का स्मार्ट तरीका
+                            let btns = Array.from(document.querySelectorAll('button')).filter(b => b.offsetWidth > 0 && !b.disabled);
+                            let sendBtn = btns.find(b => {
+                                const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                                const testId = (b.getAttribute('data-testid') || '').toLowerCase();
+                                return aria.includes('send') || testId.includes('send');
+                            });
+                            
+                            if (!sendBtn) {
+                                // अगर नाम से नहीं मिला, तो आखिरी SVG वाला बटन सेंड होता है
+                                let svgBtns = btns.filter(b => b.querySelector('svg'));
+                                sendBtn = svgBtns[svgBtns.length - 1];
+                            }
                             
                             if (sendBtn) {
                                 sendBtn.click();
                                 window.AndroidBridge.onInjectionSuccess('SUCCESS: Heavy Payload chunked & clicked');
                             } else {
-                                window.AndroidBridge.onError('DOM_ERROR: Send button not active');
+                                window.AndroidBridge.onError('DOM_ERROR: Visible Send button not found');
                             }
-                        }, 1000);
+                        }, 1500); // टाइपिंग के बाद 1.5 सेकंड रुको ताकि सेंड बटन एक्टिव हो जाए
                     }
 
                     injectNextChunk();
@@ -147,12 +171,11 @@ object JsInjector {
         """.trimIndent()
     }
 
-    // 🚨 3. HARVESTER SCRIPT (WITH PATIENCE LOCK & THINKING DETECTOR)
+    // 🚨 3. HARVESTER SCRIPT (Patience Lock)
     val HARVESTER_SCRIPT = """
         (function() {
             if (window.activeHarvester) clearInterval(window.activeHarvester);
             
-            // 🔒 PATIENCE LOCK: शुरू होते ही सबसे आखिरी (पुराने) मैसेज को याद कर लो
             const initialBlocks = document.querySelectorAll('.markdown-body, .prose, .message-content, div[data-message-author="assistant"], div[class*="content"]');
             const initialContent = initialBlocks.length > 0 ? initialBlocks[initialBlocks.length - 1].innerText.trim() : '';
             
@@ -161,7 +184,6 @@ object JsInjector {
             
             window.activeHarvester = setInterval(() => {
                 try {
-                    // 🧠 Qwen के "Thinking" बटन और "Typing" स्टेट को पकड़ना
                     const allSpansAndBtns = Array.from(document.querySelectorAll('button, span, div'));
                     const isThinking = allSpansAndBtns.some(el => el.innerText && el.innerText.toLowerCase().trim() === 'thinking');
                     const isTyping = document.querySelector('button[aria-label*="Stop"], .typing-indicator, [class*="typing"]') !== null || isThinking;
@@ -174,10 +196,9 @@ object JsInjector {
                     
                     if (latestResponse === '[]' || latestResponse === '' || latestResponse === '...') return; 
                     
-                    // 🚨 CRITICAL FIX: अगर नया मैसेज अभी भी पुराने वाले जैसा ही है, तो मतलब AI ने सोचना शुरू नहीं किया है। इंतज़ार करो!
                     if (latestResponse === initialContent) {
                         stabilityCounter = 0; 
-                        return; // लूप यहीं से वापस लौट जाएगा
+                        return; 
                     }
                     
                     if (!isTyping) {
@@ -188,7 +209,6 @@ object JsInjector {
                             lastContent = latestResponse;
                         }
                         
-                        // 5 सेकंड की स्टेबिलिटी (AI ने टाइपिंग पूरी कर ली है)
                         if (stabilityCounter >= 5) {
                             clearInterval(window.activeHarvester);
                             window.activeHarvester = null;
@@ -209,14 +229,14 @@ object JsInjector {
                             window.AndroidBridge.onResponseHarvested(finalJsonOutput);
                         }
                     } else {
-                        stabilityCounter = 0; // टाइपिंग/थिंकिंग चल रही है, तो काउंटर रिसेट करो
+                        stabilityCounter = 0; 
                         lastContent = latestResponse;
                     }
                 } catch (e) {
                     clearInterval(window.activeHarvester);
                     window.AndroidBridge.onError('HARVEST_ERROR: ' + e.message);
                 }
-            }, 1000); // हर 1 सेकंड में चेक करेगा
+            }, 1000);
         })();
     """.trimIndent()
 }
