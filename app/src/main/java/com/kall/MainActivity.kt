@@ -28,7 +28,8 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "Kall_Muscle"
         private const val TARGET_URL = "https://chat.qwen.ai/" 
-        private const val MAX_DOM_POLL_ATTEMPTS = 15 
+        // 🚨 45 सेकंड तक UI लोड होने का इंतज़ार करेगा (Slow Internet के लिए)
+        private const val MAX_DOM_POLL_ATTEMPTS = 45 
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -88,7 +89,6 @@ class MainActivity : AppCompatActivity() {
             cookieManager.setAcceptCookie(true)
             cookieManager.setAcceptThirdPartyCookies(this, true)
 
-            // 🚨 Re-attached the missing Bridge Reference here
             addJavascriptInterface(NeuroBridge(WeakReference(this@MainActivity)), "AndroidBridge")
 
             webViewClient = object : WebViewClient() {
@@ -98,16 +98,18 @@ class MainActivity : AppCompatActivity() {
                     isPageLoaded = true
                     
                     view?.evaluateJavascript(JsInjector.BOOT_IMMORTALITY_SCRIPT, null)
-                    Log.i(TAG, "STATE: HTML Loaded. Waiting for SPA to render DOM...")
+                    Log.i(TAG, "STATE: HTML Loaded. Waiting for SPA UI to render...")
                     
+                    // 🚨 अगर कोई टास्क पेंडिंग है (रिफ्रेश के बाद), तो उसे दोबारा कंटिन्यू करो
                     if (currentTask != null) {
+                        Log.i(TAG, "STATE: Resuming pending task ${currentTask?.id} after reload.")
                         pollDomReadinessAndExecute(0)
                     }
                 }
 
                 override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                     Log.e(TAG, "WEBVIEW ERROR: ${error?.description}")
-                    triggerSelfHealingProtocol()
+                    triggerSelfHealingProtocol(keepTask = true) // एरर पर रिफ्रेश करो, पर टास्क मत खोना
                 }
             }
         }
@@ -116,36 +118,42 @@ class MainActivity : AppCompatActivity() {
 
     fun onNewTaskReceived(task: InteractionTask) {
         runOnUiThread {
-            Log.i(TAG, "SIGNAL: New Task ${task.id} incoming.")
-            currentTask = task
+            Log.i(TAG, "SIGNAL: New Task ${task.id} incoming. Saving to memory.")
+            currentTask = task // टास्क को सेव कर लिया
             webView.resumeTimers()
 
             if (isPageLoaded) {
                 pollDomReadinessAndExecute(0)
             } else {
-                Log.w(TAG, "BUFFER: Page is dead. Triggering fresh load...")
-                isPageLoaded = false
-                webView.reload()
+                Log.w(TAG, "BUFFER: Page is still loading. Will wait for UI.")
             }
         }
     }
 
+    // 🚨 SMART WAIT LOGIC
     private fun pollDomReadinessAndExecute(attempt: Int) {
         if (attempt >= MAX_DOM_POLL_ATTEMPTS) {
-            Log.e(TAG, "TIMEOUT: DOM never rendered the input box. Triggering Self-Healing...")
-            triggerSelfHealingProtocol()
+            Log.w(TAG, "TIMEOUT: Slow Internet. UI not fully loaded after 45s. Refreshing App...")
+            // टास्क को सेव रखते हुए पेज को फिर से लोड करो
+            triggerSelfHealingProtocol(keepTask = true)
             return
         }
 
-        val healthCheckScript = "(function(){ return (document.querySelector('textarea') !== null || document.querySelector('[contenteditable=\"true\"]') !== null).toString(); })();"
+        // चेक करो कि क्या मैसेज लिखने वाला बॉक्स और बटन स्क्रीन पर सच में आ गए हैं
+        val healthCheckScript = "(function(){ " +
+                "const ta = document.querySelector('textarea'); " +
+                "const ce = document.querySelector('[contenteditable=\"true\"]'); " +
+                "return (ta !== null || ce !== null).toString(); })();"
         
         webView.evaluateJavascript(healthCheckScript) { result ->
             val isAlive = result != null && (result == "true" || result == "\"true\"")
             
             if (isAlive) {
-                Log.i(TAG, "STATUS: DOM is READY ✅. Injecting payload for task ${currentTask?.id}...")
+                Log.i(TAG, "STATUS: UI is READY ✅. Injecting payload for task ${currentTask?.id}...")
                 currentTask?.let { executeTask(it) }
             } else {
+                Log.i(TAG, "STATUS: Waiting for UI to render... (Attempt ${attempt + 1}/$MAX_DOM_POLL_ATTEMPTS)")
+                // 1 सेकंड रुको और फिर से चेक करो
                 webView.postDelayed({ pollDomReadinessAndExecute(attempt + 1) }, 1000)
             }
         }
@@ -158,6 +166,7 @@ class MainActivity : AppCompatActivity() {
 
     fun handleInjectionSuccess() {
         runOnUiThread {
+            Log.i(TAG, "INJECTION: Success! Now waiting for AI response...")
             webView.evaluateJavascript(JsInjector.HARVESTER_SCRIPT, null)
         }
     }
@@ -168,24 +177,25 @@ class MainActivity : AppCompatActivity() {
                 val completedTask = it.copy(response = response, status = "completed")
                 SupabaseManager.updateTaskAndAcknowledge(completedTask)
             }
-            currentTask = null
+            currentTask = null // टास्क पूरा हो गया, अब इसे मेमोरी से हटा दो
         }
     }
 
     fun handleError(errorMessage: String) {
         runOnUiThread {
-            currentTask?.let {
-                val failedTask = it.copy(response = errorMessage, status = "failed")
-                SupabaseManager.updateTaskAndAcknowledge(failedTask)
-            }
-            currentTask = null
-            triggerSelfHealingProtocol()
+            Log.e(TAG, "JS ERROR REPORTED: $errorMessage")
+            // अगर JS फेल हुआ है, तो हो सकता है UI अटक गया हो। रिफ्रेश करो।
+            triggerSelfHealingProtocol(keepTask = true)
         }
     }
 
-    fun triggerSelfHealingProtocol() {
+    // 🚨 SMART REFRESH PROTOCOL
+    fun triggerSelfHealingProtocol(keepTask: Boolean = false) {
         isPageLoaded = false
-        currentTask = null
+        if (!keepTask) {
+            currentTask = null // सिर्फ तब डिलीट करो जब टास्क सच में फेल हो जाए
+        }
+        Log.i(TAG, "HEALING: Reloading WebView in 3 seconds...")
         webView.postDelayed({ webView.reload() }, 3000)
     }
 
@@ -208,30 +218,24 @@ class MainActivity : AppCompatActivity() {
 
 // ==========================================
 // 🌉 JS TO ANDROID COMMUNICATION BRIDGE 
-// (Strictly attached at the bottom of MainActivity.kt)
 // ==========================================
 class NeuroBridge(private val activityRef: WeakReference<MainActivity>) {
     
     @JavascriptInterface
-    fun onChunkProgress(currentChunk: Int, totalChunks: Int) {
-        Log.i("Kall_Muscle", "JS: Injecting chunk $currentChunk of $totalChunks...")
-    }
+    fun onChunkProgress(currentChunk: Int, totalChunks: Int) {}
 
     @JavascriptInterface
     fun onInjectionSuccess(message: String) {
-        Log.i("Kall_Muscle", "JS: $message")
         activityRef.get()?.handleInjectionSuccess()
     }
 
     @JavascriptInterface
     fun onResponseHarvested(response: String) {
-        Log.i("Kall_Muscle", "JS: Harvesting Complete.")
         activityRef.get()?.handleResponseHarvested(response)
     }
 
     @JavascriptInterface
     fun onError(errorMessage: String) {
-        Log.e("Kall_Muscle", "JS ERROR: $errorMessage")
         activityRef.get()?.handleError(errorMessage)
     }
 }
