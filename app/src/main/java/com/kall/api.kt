@@ -7,7 +7,7 @@ import kotlinx.serialization.Serializable
  * ARCHITECTURE CONTRACT: api.kt
  * Role: Data Models & JavaScript Injection Utilities (Stateless)
  * Constraints: No Android Context, No State, No Network calls.
- * UPDATE: Base64 Payload Encryption added for 50k+ massive prompts (Zero Crash Guarantee).
+ * UPDATE: Added "Patience Lock" & "Thinking Detector" to stop harvesting old messages!
  */
 
 // ==========================================
@@ -28,7 +28,7 @@ data class InteractionTask(
 
 object JsInjector {
 
-    // 🚨 1. IMMORTALITY SCRIPT: WebView को ज़िंदा रखने का हैक
+    // 🚨 1. IMMORTALITY SCRIPT (WebView को ज़िंदा रखने का हैक)
     val BOOT_IMMORTALITY_SCRIPT = """
         (function() {
             if (!window.audioHackActive) {
@@ -41,8 +41,7 @@ object JsInjector {
                     oscillator.connect(gainNode);
                     gainNode.connect(audioCtx.destination);
                     oscillator.start();
-                    console.log("SYSTEM: Boot-level Audio Hack Active.");
-                } catch(e) { console.log(e); }
+                } catch(e) {}
             }
 
             if (!window.heartbeatActive) {
@@ -65,9 +64,8 @@ object JsInjector {
         })();
     """.trimIndent()
 
-    // 🚨 2. CHUNKED INJECTION SCRIPT (WITH BASE64 DECODER): बड़े डेटा को सुरक्षित डालना
+    // 🚨 2. CHUNKED INJECTION SCRIPT (बड़े डेटा को सुरक्षित डालना)
     fun buildDispatchScript(rawPrompt: String): String {
-        // प्रॉम्प्ट को Base64 में एन्कोड करें ताकि कोई JS Syntax Error ना आए
         val base64Prompt = Base64.encodeToString(rawPrompt.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
 
         return """
@@ -79,7 +77,6 @@ object JsInjector {
                         return;
                     }
                     
-                    // Base64 को वापस ओरिजिनल टेक्स्ट में डिकोड करना (UTF-8 सपोर्ट के साथ)
                     const b64 = "$base64Prompt";
                     const binString = atob(b64);
                     const bytes = new Uint8Array(binString.length);
@@ -88,14 +85,12 @@ object JsInjector {
                     }
                     const fullText = new TextDecoder('utf-8').decode(bytes);
                     
-                    // 1024 कैरेक्टर्स के पैकेट्स बनाना
                     const chunkSize = 1024; 
                     const chunks = [];
                     for (let i = 0; i < fullText.length; i += chunkSize) {
                         chunks.push(fullText.substring(i, i + chunkSize));
                     }
                     
-                    // डिब्बा खाली करना
                     if (inputEl.tagName.toLowerCase() === 'textarea') {
                         const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
                         if (setter) setter.call(inputEl, "");
@@ -106,11 +101,9 @@ object JsInjector {
 
                     let currentChunkIndex = 0;
 
-                    // चंक-वाइज़ टाइपिंग (UI फ्रीज़ रोकने के लिए)
                     function injectNextChunk() {
                         if (currentChunkIndex < chunks.length) {
                             window.AndroidBridge.onChunkProgress(currentChunkIndex + 1, chunks.length);
-                            
                             const chunkText = chunks[currentChunkIndex];
                             
                             if (inputEl.tagName.toLowerCase() === 'textarea') {
@@ -120,9 +113,7 @@ object JsInjector {
                                 inputEl.innerHTML += chunkText;
                             }
                             
-                            // React को अपडेट करने का सिग्नल
                             inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-                            
                             currentChunkIndex++;
                             setTimeout(injectNextChunk, 20); 
                         } else {
@@ -156,25 +147,38 @@ object JsInjector {
         """.trimIndent()
     }
 
-    // 🚨 3. DATA EXTRACTION SCRIPT: सिर्फ शुद्ध JSON निकालना
+    // 🚨 3. HARVESTER SCRIPT (WITH PATIENCE LOCK & THINKING DETECTOR)
     val HARVESTER_SCRIPT = """
         (function() {
             if (window.activeHarvester) clearInterval(window.activeHarvester);
+            
+            // 🔒 PATIENCE LOCK: शुरू होते ही सबसे आखिरी (पुराने) मैसेज को याद कर लो
+            const initialBlocks = document.querySelectorAll('.markdown-body, .prose, .message-content, div[data-message-author="assistant"], div[class*="content"]');
+            const initialContent = initialBlocks.length > 0 ? initialBlocks[initialBlocks.length - 1].innerText.trim() : '';
             
             let lastContent = '';
             let stabilityCounter = 0;
             
             window.activeHarvester = setInterval(() => {
                 try {
-                    const isTyping = document.querySelector('button[aria-label*="Stop"], .typing-indicator, [class*="typing"]') !== null;
-                    const responseBlocks = document.querySelectorAll('.markdown-body, .prose, .message-content, div[data-message-author="assistant"], div[class*="content"]');
+                    // 🧠 Qwen के "Thinking" बटन और "Typing" स्टेट को पकड़ना
+                    const allSpansAndBtns = Array.from(document.querySelectorAll('button, span, div'));
+                    const isThinking = allSpansAndBtns.some(el => el.innerText && el.innerText.toLowerCase().trim() === 'thinking');
+                    const isTyping = document.querySelector('button[aria-label*="Stop"], .typing-indicator, [class*="typing"]') !== null || isThinking;
                     
+                    const responseBlocks = document.querySelectorAll('.markdown-body, .prose, .message-content, div[data-message-author="assistant"], div[class*="content"]');
                     if (responseBlocks.length === 0) return;
                     
                     const latestResponseEl = responseBlocks[responseBlocks.length - 1];
                     let latestResponse = latestResponseEl.innerText.trim();
                     
                     if (latestResponse === '[]' || latestResponse === '' || latestResponse === '...') return; 
+                    
+                    // 🚨 CRITICAL FIX: अगर नया मैसेज अभी भी पुराने वाले जैसा ही है, तो मतलब AI ने सोचना शुरू नहीं किया है। इंतज़ार करो!
+                    if (latestResponse === initialContent) {
+                        stabilityCounter = 0; 
+                        return; // लूप यहीं से वापस लौट जाएगा
+                    }
                     
                     if (!isTyping) {
                         if (latestResponse === lastContent) {
@@ -184,7 +188,7 @@ object JsInjector {
                             lastContent = latestResponse;
                         }
                         
-                        // 5 सेकंड तक आउटपुट स्थिर रहे तो एक्सट्रेक्ट करो
+                        // 5 सेकंड की स्टेबिलिटी (AI ने टाइपिंग पूरी कर ली है)
                         if (stabilityCounter >= 5) {
                             clearInterval(window.activeHarvester);
                             window.activeHarvester = null;
@@ -205,14 +209,15 @@ object JsInjector {
                             window.AndroidBridge.onResponseHarvested(finalJsonOutput);
                         }
                     } else {
-                        stabilityCounter = 0;
+                        stabilityCounter = 0; // टाइपिंग/थिंकिंग चल रही है, तो काउंटर रिसेट करो
                         lastContent = latestResponse;
                     }
                 } catch (e) {
                     clearInterval(window.activeHarvester);
                     window.AndroidBridge.onError('HARVEST_ERROR: ' + e.message);
                 }
-            }, 1000);
+            }, 1000); // हर 1 सेकंड में चेक करेगा
         })();
     """.trimIndent()
 }
+
