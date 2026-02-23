@@ -6,12 +6,11 @@ import kotlinx.serialization.Serializable
 /**
  * ARCHITECTURE CONTRACT: api.kt
  * Role: Data Models & JavaScript Injection Utilities (Stateless)
- * Constraints: No Android Context, No State, No Network calls.
- * UPDATE: Added React/Vue Virtual DOM Bypass Hack to ensure text is visible in WebView.
+ * Architecture: Employs Universal SPA Event Simulation to bypass React/Vue Virtual DOM restrictions.
  */
 
 // ==========================================
-// 1. DATA MODELS (SUPABASE CONTRACTS)
+// 1. DATA MODELS
 // ==========================================
 
 @Serializable
@@ -28,7 +27,6 @@ data class InteractionTask(
 
 object JsInjector {
 
-    // 🚨 1. IMMORTALITY SCRIPT (WebView को ज़िंदा रखने का हैक)
     val BOOT_IMMORTALITY_SCRIPT = """
         (function() {
             if (!window.audioHackActive) {
@@ -52,117 +50,92 @@ object JsInjector {
         })();
     """.trimIndent()
 
-    // 🚨 2. CHUNKED INJECTION SCRIPT (WITH REACT.JS BYPASS)
     fun buildDispatchScript(rawPrompt: String): String {
-        // प्रॉम्प्ट को Base64 में एन्कोड करें ताकि JSON का कोई ब्रैकेट JS को क्रैश न करे
+        // Base64 encode to prevent JSON/String escaping syntax errors in JS payload
         val base64Prompt = Base64.encodeToString(rawPrompt.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
 
         return """
             (function() {
                 try {
-                    // 🚨 HACK 1: सिर्फ वो डिब्बा ढूंढो जो स्क्रीन पर दिखाई दे रहा हो (Hidden को इग्नोर करो)
-                    const textareas = Array.from(document.querySelectorAll('textarea, [contenteditable="true"]'));
-                    const inputEl = textareas.find(el => el.offsetWidth > 0 && el.offsetHeight > 0);
-                    
-                    if (!inputEl) {
-                        window.AndroidBridge.onError('DOM_ERROR: Visible Input box not found');
-                        return;
-                    }
-                    
                     const b64 = "$base64Prompt";
                     const binString = atob(b64);
                     const bytes = new Uint8Array(binString.length);
-                    for (let i = 0; i < binString.length; i++) {
-                        bytes[i] = binString.charCodeAt(i);
-                    }
+                    for (let i = 0; i < binString.length; i++) { bytes[i] = binString.charCodeAt(i); }
                     const fullText = new TextDecoder('utf-8').decode(bytes);
+
+                    // 1. Locate the active input area
+                    const textareas = Array.from(document.querySelectorAll('textarea, [contenteditable="true"]'));
+                    const inputEl = textareas.find(el => el.offsetWidth > 0 && el.offsetHeight > 0 && !el.disabled);
                     
-                    const chunkSize = 1024; 
-                    const chunks = [];
-                    for (let i = 0; i < fullText.length; i += chunkSize) {
-                        chunks.push(fullText.substring(i, i + chunkSize));
+                    if (!inputEl) {
+                        window.AndroidBridge.onError('DOM_ERROR: No interactive input element found.');
+                        return;
                     }
-                    
+
                     inputEl.focus();
 
-                    // 🚨 HACK 2: React.js Bypass Setter (यह React को बेवकूफ बनाएगा)
-                    function setNativeValue(element, value) {
-                        if (element.tagName.toLowerCase() === 'textarea') {
-                            const valueSetter = Object.getOwnPropertyDescriptor(element, 'value').set;
-                            const prototype = Object.getPrototypeOf(element);
-                            const prototypeValueSetter = Object.getOwnPropertyDescriptor(prototype, 'value').set;
-                            
-                            if (valueSetter && valueSetter !== prototypeValueSetter) {
-                                prototypeValueSetter.call(element, value);
-                            } else {
-                                valueSetter.call(element, value);
-                            }
-                        } else {
-                            // ContentEditable के लिए
-                            document.execCommand('selectAll', false, null);
-                            document.execCommand('insertText', false, value);
-                        }
+                    // 2. Universal React/Vue Virtual DOM Bypass
+                    const isTextarea = inputEl.tagName.toLowerCase() === 'textarea';
+                    
+                    if (isTextarea) {
+                        // React 16+ Native Setter Hack
+                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+                        nativeInputValueSetter.call(inputEl, fullText);
+                    } else {
+                        // ContentEditable Fallback
+                        inputEl.innerHTML = '';
+                        document.execCommand('insertText', false, fullText);
                     }
 
-                    // पहले डिब्बा साफ करो
-                    setNativeValue(inputEl, "");
-                    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+                    // 3. Fire complete event lifecycle to wake up SPA state manager
+                    const events = ['input', 'change', 'compositionend', 'keyup'];
+                    events.forEach(eventType => {
+                        inputEl.dispatchEvent(new Event(eventType, { bubbles: true, cancelable: true }));
+                    });
 
-                    let currentChunkIndex = 0;
-
-                    function injectNextChunk() {
-                        if (currentChunkIndex < chunks.length) {
-                            window.AndroidBridge.onChunkProgress(currentChunkIndex + 1, chunks.length);
-                            const chunkText = chunks[currentChunkIndex];
-                            
-                            // चंक को जोड़ो और React को बताओ कि टाइपिंग हुई है
-                            if (inputEl.tagName.toLowerCase() === 'textarea') {
-                                setNativeValue(inputEl, inputEl.value + chunkText);
-                            } else {
-                                // कर्सर को आखिर में ले जाकर इंसर्ट करो
-                                const selection = window.getSelection();
-                                selection.selectAllChildren(inputEl);
-                                selection.collapseToEnd();
-                                document.execCommand('insertText', false, chunkText);
-                            }
-                            
-                            inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-                            
-                            currentChunkIndex++;
-                            setTimeout(injectNextChunk, 20); 
-                        } else {
-                            finalizeInjection();
-                        }
-                    }
-
-                    function finalizeInjection() {
-                        inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+                    // 4. Locate and trigger Send Button
+                    setTimeout(() => {
+                        let sendBtn = null;
                         
-                        setTimeout(() => {
-                            // 🚨 सेंड बटन ढूंढने का स्मार्ट तरीका
-                            let btns = Array.from(document.querySelectorAll('button')).filter(b => b.offsetWidth > 0 && !b.disabled);
-                            let sendBtn = btns.find(b => {
-                                const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-                                const testId = (b.getAttribute('data-testid') || '').toLowerCase();
-                                return aria.includes('send') || testId.includes('send');
-                            });
-                            
-                            if (!sendBtn) {
-                                // अगर नाम से नहीं मिला, तो आखिरी SVG वाला बटन सेंड होता है
-                                let svgBtns = btns.filter(b => b.querySelector('svg'));
-                                sendBtn = svgBtns[svgBtns.length - 1];
-                            }
-                            
-                            if (sendBtn) {
-                                sendBtn.click();
-                                window.AndroidBridge.onInjectionSuccess('SUCCESS: Heavy Payload chunked & clicked');
-                            } else {
-                                window.AndroidBridge.onError('DOM_ERROR: Visible Send button not found');
-                            }
-                        }, 1500); // टाइपिंग के बाद 1.5 सेकंड रुको ताकि सेंड बटन एक्टिव हो जाए
-                    }
+                        // Strategy A: Standard selectors
+                        const standardSelectors = [
+                            'button[data-testid*="send"]', 
+                            'button[aria-label*="send" i]',
+                            'button[aria-label*="Send" i]'
+                        ];
+                        for (let sel of standardSelectors) {
+                            sendBtn = document.querySelector(sel);
+                            if (sendBtn && !sendBtn.disabled) break;
+                        }
 
-                    injectNextChunk();
+                        // Strategy B: Proximity Traversal (Find button in the same container as input)
+                        if (!sendBtn || sendBtn.disabled) {
+                            let parent = inputEl.parentElement;
+                            let attempts = 0;
+                            while (parent && attempts < 5) {
+                                const btns = Array.from(parent.querySelectorAll('button'));
+                                // Filter out disabled buttons and attachments
+                                const activeBtns = btns.filter(b => !b.disabled && b.offsetWidth > 0);
+                                if (activeBtns.length > 0) {
+                                    // Usually the send button is the last interactive button in the input row
+                                    sendBtn = activeBtns[activeBtns.length - 1];
+                                    break;
+                                }
+                                parent = parent.parentElement;
+                                attempts++;
+                            }
+                        }
+
+                        if (sendBtn && !sendBtn.disabled) {
+                            sendBtn.focus();
+                            sendBtn.click();
+                            window.AndroidBridge.onInjectionSuccess('SUCCESS: Payload injected and dispatched.');
+                        } else {
+                            // Fallback: Trigger Enter key if button is utterly hidden
+                            inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+                            window.AndroidBridge.onInjectionSuccess('WARNING: Send button not found. Dispatched Enter key event instead.');
+                        }
+                    }, 800); // 800ms delay allows SPA to process the input event and enable the button
 
                 } catch (e) {
                     window.AndroidBridge.onError('EXECUTION_ERROR: ' + e.message);
@@ -171,12 +144,13 @@ object JsInjector {
         """.trimIndent()
     }
 
-    // 🚨 3. HARVESTER SCRIPT (Patience Lock)
     val HARVESTER_SCRIPT = """
         (function() {
             if (window.activeHarvester) clearInterval(window.activeHarvester);
             
-            const initialBlocks = document.querySelectorAll('.markdown-body, .prose, .message-content, div[data-message-author="assistant"], div[class*="content"]');
+            // Standardize selectors for LLM outputs
+            const contentSelectors = '.markdown-body, .prose, .message-content, div[data-message-author="assistant"], div[class*="content"]';
+            const initialBlocks = document.querySelectorAll(contentSelectors);
             const initialContent = initialBlocks.length > 0 ? initialBlocks[initialBlocks.length - 1].innerText.trim() : '';
             
             let lastContent = '';
@@ -184,19 +158,18 @@ object JsInjector {
             
             window.activeHarvester = setInterval(() => {
                 try {
+                    // Check typing indicators
                     const allSpansAndBtns = Array.from(document.querySelectorAll('button, span, div'));
                     const isThinking = allSpansAndBtns.some(el => el.innerText && el.innerText.toLowerCase().trim() === 'thinking');
                     const isTyping = document.querySelector('button[aria-label*="Stop"], .typing-indicator, [class*="typing"]') !== null || isThinking;
                     
-                    const responseBlocks = document.querySelectorAll('.markdown-body, .prose, .message-content, div[data-message-author="assistant"], div[class*="content"]');
+                    const responseBlocks = document.querySelectorAll(contentSelectors);
                     if (responseBlocks.length === 0) return;
                     
                     const latestResponseEl = responseBlocks[responseBlocks.length - 1];
                     let latestResponse = latestResponseEl.innerText.trim();
                     
-                    if (latestResponse === '[]' || latestResponse === '' || latestResponse === '...') return; 
-                    
-                    if (latestResponse === initialContent) {
+                    if (!latestResponse || latestResponse === '...' || latestResponse === initialContent) {
                         stabilityCounter = 0; 
                         return; 
                     }
@@ -209,24 +182,26 @@ object JsInjector {
                             lastContent = latestResponse;
                         }
                         
-                        if (stabilityCounter >= 5) {
+                        // Wait for 3 seconds of absolute DOM stability (3 ticks)
+                        if (stabilityCounter >= 3) {
                             clearInterval(window.activeHarvester);
                             window.activeHarvester = null;
                             
-                            let finalJsonOutput = latestResponse;
+                            // Aggressive JSON extraction fallback
+                            let finalOutput = latestResponse;
                             const jsonRegex = /```(?:json)?\s*([\s\S]*?)```/i;
                             const match = latestResponse.match(jsonRegex);
                             
                             if (match && match[1]) {
-                                finalJsonOutput = match[1].trim(); 
+                                finalOutput = match[1].trim(); 
                             } else {
                                 const rawJsonMatch = latestResponse.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
                                 if (rawJsonMatch && rawJsonMatch[0]) {
-                                    finalJsonOutput = rawJsonMatch[0].trim();
+                                    finalOutput = rawJsonMatch[0].trim();
                                 }
                             }
                             
-                            window.AndroidBridge.onResponseHarvested(finalJsonOutput);
+                            window.AndroidBridge.onResponseHarvested(finalOutput);
                         }
                     } else {
                         stabilityCounter = 0; 
@@ -240,4 +215,3 @@ object JsInjector {
         })();
     """.trimIndent()
 }
-
