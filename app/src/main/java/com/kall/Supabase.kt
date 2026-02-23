@@ -14,8 +14,7 @@ import java.net.URL
 
 /**
  * ARCHITECTURE CONTRACT: SupabaseManager
- * Role: 100% Native REST Polling (No WebSockets).
- * NOTE: InteractionTask is now strictly imported from api.kt
+ * Update: 1-Second Ultra-Fast Polling Enabled.
  */
 object SupabaseManager {
 
@@ -30,12 +29,13 @@ object SupabaseManager {
     private val networkScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     fun initializeNetworkListener(onNewTask: (InteractionTask) -> Unit) {
-        Log.i(TAG, "SYSTEM BOOT: Initializing Hardened REST Polling...")
+        Log.i(TAG, "SYSTEM BOOT: Initializing 1-Second Fast Polling...")
 
         networkScope.launch {
             while (true) {
                 fetchPendingTask(onNewTask)
-                delay(2500)
+                // 🚨 UPDATE: हर 1 सेकंड में डेटाबेस चेक करेगा
+                delay(1000)
             }
         }
     }
@@ -68,6 +68,7 @@ object SupabaseManager {
                         Log.i(TAG, "POLLING: Found pending task: $id")
                         val task = InteractionTask(id = id, prompt = prompt, status = "pending")
                         
+                        // टास्क को लॉक करो ताकि कोई और वर्कर न ले ले
                         if (lockTask(task.id)) {
                             onNewTask(task)
                         }
@@ -148,9 +149,9 @@ object SupabaseManager {
                 }
 
                 if (connection.responseCode in 200..299) {
-                    Log.i(TAG, "SUCCESS: Task ${task.id} updated on cloud.")
+                    Log.i(TAG, "SUCCESS: Task ${task.id} result successfully sent to Supabase.")
                 } else {
-                    Log.e(TAG, "DB ERROR: Failed to ack task ${task.id} - HTTP ${connection.responseCode}")
+                    Log.e(TAG, "DB ERROR: Failed to ack task ${task.id}")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "ACK EXCEPTION: ${e.message}")
