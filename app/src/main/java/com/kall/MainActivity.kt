@@ -1,149 +1,69 @@
 package com.kall
 
-import android.app.KeyguardManager
-import android.app.NotificationManager
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
-import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
-import android.view.ViewGroup
+import android.util.Log
 import android.view.WindowManager
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
+import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
+import java.lang.ref.WeakReference
 
+/**
+ * ARCHITECTURE CONTRACT: MainActivity.kt
+ * Role: The Executor (Headless WebView & State Machine).
+ * Logic: Receives Task -> Health Check -> Reload (If Dead) -> Wait -> Injects JS -> Observes DOM.
+ * UPDATE: Implemented User's "Smart Pre-Flight Check & Reload" & Audio Auto-Play Fixes.
+ */
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var logTextView: TextView
+    private lateinit var webView: WebView
+    private var isPageLoaded = false
+    private var currentTask: InteractionTask? = null
 
+    companion object {
+        private const val TAG = "Kall_Muscle"
+        private const val TARGET_URL = "https://chat.qwen.ai/" 
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         
-        // 1. CREATE FULL-SCREEN CONSOLE WITH TEST BUTTON
-        val mainLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.BLACK)
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            setPadding(32, 32, 32, 32)
-        }
-
-        val testButton = Button(this).apply {
-            text = "🚀 TEST ROBOT MANUALLY"
-            setBackgroundColor(Color.parseColor("#4CAF50")) // Green Button
-            setTextColor(Color.WHITE)
-            textSize = 18f
-            setOnClickListener {
-                AppLogger.log("🧪 MANUAL TEST: Waking up Robot!")
-                TaskMemory.currentTask = InteractionTask("test-123", "Hello Qwen! Robot is working!", "pending")
-                updateConsole()
-                launchTargetApp()
-            }
-        }
-
-        val scrollView = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
-        }
-
-        logTextView = TextView(this).apply {
-            setTextColor(Color.GREEN)
-            textSize = 14f
-            setTypeface(Typeface.MONOSPACE)
-            text = AppLogger.getLogs()
-        }
-
-        scrollView.addView(logTextView)
-        mainLayout.addView(testButton)
-        mainLayout.addView(scrollView)
-        setContentView(mainLayout)
-
-        AppLogger.log("📱 UI: MainActivity Launched Successfully.")
-        updateConsole()
-
-        // 2. SMASH THE LOCK
-        window.addFlags(
-            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
-            WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
-            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-            WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true)
-            setTurnScreenOn(true)
-            val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
-            keyguardManager.requestDismissKeyguard(this, null)
-        }
-
-        // 3. ANDROID 15 PERMISSION CHECKS
-        checkAndroid15Permissions()
+        requestBatteryExemption()
         startWorkerService()
-
-        // 4. CHECK IF WOKEN UP BY CLOUD TASK
-        if (TaskMemory.currentTask != null && TaskMemory.currentTask?.id != "test-123") {
-            AppLogger.log("⚡ UI: Real Task detected from Cloud! Launching Qwen...")
-            updateConsole()
-            launchTargetApp()
-        }
-    }
-
-    override fun onNewIntent(intent: Intent?) {
-        super.onNewIntent(intent)
-        updateConsole()
-        if (TaskMemory.currentTask != null) {
-            AppLogger.log("⚡ UI: Woken up from background! Launching Qwen...")
-            updateConsole()
-            launchTargetApp()
-        }
-    }
-
-    private fun updateConsole() {
-        runOnUiThread { logTextView.text = AppLogger.getLogs() }
-    }
-
-    private fun checkAndroid15Permissions() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-                AppLogger.log("⚠️ Need Battery Exemption...")
-                startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
-            }
-        }
+        setupHeadlessWebView()
+        setContentView(webView)
         
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            val nm = getSystemService(NotificationManager::class.java)
-            if (!nm.canUseFullScreenIntent()) {
-                AppLogger.log("❌ Alarm Intent Blocked by Android 15! Please Allow it.")
-                startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:$packageName")))
-            }
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            AppLogger.log("❌ Display Over Apps Blocked! Please Allow it.")
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-        }
+        Log.d(TAG, "BOOT: Initializing Network Handshake...")
+        SupabaseManager.initializeNetworkListener(this::onNewTaskReceived)
     }
 
-    private fun launchTargetApp() {
-        val targetPackage = "ai.qwenlm.chat.android"
-        try {
-            val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)
-            if (launchIntent != null) {
-                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                startActivity(launchIntent)
-                AppLogger.log("✅ SUCCESS: Opened Qwen App!")
-            } else {
-                AppLogger.log("❌ ERROR: Qwen App NOT FOUND! Is it installed?")
+    private fun requestBatteryExemption() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                    startActivity(intent)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "BATTERY ERROR: ${e.message}")
             }
-        } catch (e: Exception) {
-            AppLogger.log("❌ LAUNCH ERROR: ${e.message}")
         }
-        updateConsole()
     }
 
     private fun startWorkerService() {
@@ -154,18 +74,179 @@ class MainActivity : AppCompatActivity() {
             startService(serviceIntent)
         }
     }
-}
 
-object TaskMemory {
-    var currentTask: InteractionTask? = null
-}
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun setupHeadlessWebView() {
+        webView = WebView(this).apply {
+            settings.apply {
+                javaScriptEnabled = true
+                domStorageEnabled = true
+                databaseEnabled = true
+                // 🚨 CRITICAL FIX: यह Audio Hack (Immortality) को बिना User Click के चलने देगा
+                mediaPlaybackRequiresUserGesture = false 
+                
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    offscreenPreRaster = true 
+                }
+            }
 
-object AppLogger {
-    private val logs = mutableListOf<String>()
-    fun log(message: String) {
-        val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-        logs.add("[$time] $message")
-        android.util.Log.d("Kall_AppLogger", message)
+            val cookieManager = CookieManager.getInstance()
+            cookieManager.setAcceptCookie(true)
+            cookieManager.setAcceptThirdPartyCookies(this, true)
+
+            addJavascriptInterface(NeuroBridge(WeakReference(this@MainActivity)), "AndroidBridge")
+
+            webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    CookieManager.getInstance().flush()
+                    isPageLoaded = true
+                    
+                    // पेज लोड होते ही इमोर्टेलिटी स्क्रिप्ट इंजेक्ट करो
+                    view?.evaluateJavascript(JsInjector.BOOT_IMMORTALITY_SCRIPT, null)
+
+                    Log.i(TAG, "STATE: Engine Ready. Page Fully Loaded.")
+                    
+                    // 🚨 WAIT & EXECUTE LOGIC: अगर कोई टास्क पेंडिंग है (रीलोड के कारण), तो उसे चलाएं
+                    currentTask?.let { 
+                        Log.i(TAG, "STATE: Page refreshed successfully. Executing buffered task ${it.id} now.")
+                        executeTask(it) 
+                    }
+                }
+
+                override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                    Log.e(TAG, "WEBVIEW ERROR: ${error?.description}")
+                    triggerSelfHealingProtocol()
+                }
+            }
+        }
+        webView.loadUrl(TARGET_URL)
     }
-    fun getLogs(): String = logs.joinToString("\n\n")
+
+    // ==========================================
+    // 🚨 SMART CHECK & RELOAD LOGIC
+    // ==========================================
+    fun onNewTaskReceived(task: InteractionTask) {
+        runOnUiThread {
+            Log.i(TAG, "SIGNAL: New Task ${task.id} incoming.")
+            currentTask = task
+            
+            // ज़बरदस्ती WebView को जगाने की कोशिश
+            webView.resumeTimers()
+
+            if (isPageLoaded) {
+                Log.i(TAG, "CHECK: Verifying if App/WebView is ALIVE and DOM is ready...")
+                
+                val healthCheckScript = "(function(){ return (document.querySelector('textarea') !== null || document.querySelector('[contenteditable=\"true\"]') !== null).toString(); })();"
+                
+                webView.evaluateJavascript(healthCheckScript) { result ->
+                    // 🚨 FIX: JS से रिजल्ट "true" (स्ट्रिंग) या "\"true\"" (कोटेड स्ट्रिंग) आ सकता है
+                    val isAlive = result != null && (result == "true" || result == "\"true\"")
+                    
+                    if (isAlive) {
+                        Log.i(TAG, "STATUS: App is ALIVE ✅. Injecting message directly...")
+                        executeTask(task)
+                    } else {
+                        Log.w(TAG, "STATUS: App is ASLEEP or DOM is STALE ❌. Triggering Reload and Wait protocol...")
+                        isPageLoaded = false
+                        webView.reload() 
+                    }
+                }
+            } else {
+                Log.w(TAG, "BUFFER: Page was already dead. Triggering fresh load...")
+                isPageLoaded = false
+                webView.reload()
+            }
+        }
+    }
+
+    private fun executeTask(task: InteractionTask) {
+        val script = JsInjector.buildDispatchScript(task.prompt)
+        webView.evaluateJavascript(script, null)
+    }
+
+    // ==========================================
+    // PUBLIC HANDLERS FOR THE BRIDGE
+    // ==========================================
+    
+    fun handleInjectionSuccess() {
+        runOnUiThread {
+            // इंजेक्शन सक्सेस होने के बाद हार्वेस्टर चालू करो
+            webView.evaluateJavascript(JsInjector.HARVESTER_SCRIPT, null)
+        }
+    }
+
+    fun handleResponseHarvested(response: String) {
+        runOnUiThread {
+            currentTask?.let {
+                val completedTask = it.copy(response = response, status = "completed")
+                SupabaseManager.updateTaskAndAcknowledge(completedTask)
+            }
+            currentTask = null
+        }
+    }
+
+    fun handleError(errorMessage: String) {
+        runOnUiThread {
+            currentTask?.let {
+                val failedTask = it.copy(response = errorMessage, status = "failed")
+                SupabaseManager.updateTaskAndAcknowledge(failedTask)
+            }
+            currentTask = null
+            triggerSelfHealingProtocol()
+        }
+    }
+
+    fun triggerSelfHealingProtocol() {
+        isPageLoaded = false
+        // 3 सेकंड रुक कर रीलोड मारो
+        webView.postDelayed({ webView.reload() }, 3000)
+    }
+
+    // बैकग्राउंड में जाते वक्त भी WebView को चलने दो
+    override fun onPause() {
+        super.onPause()
+        webView.resumeTimers() 
+    }
+
+    override fun onStop() {
+        super.onStop()
+        webView.resumeTimers()
+    }
+
+    override fun onDestroy() {
+        webView.removeJavascriptInterface("AndroidBridge")
+        webView.destroy()
+        super.onDestroy()
+    }
 }
+
+// ==========================================
+// 🌉 JS TO ANDROID COMMUNICATION BRIDGE
+// ==========================================
+class NeuroBridge(private val activityRef: WeakReference<MainActivity>) {
+    
+    @JavascriptInterface
+    fun onChunkProgress(currentChunk: Int, totalChunks: Int) {
+        Log.i("Kall_Muscle", "JS: Injecting chunk $currentChunk of $totalChunks...")
+    }
+
+    @JavascriptInterface
+    fun onInjectionSuccess(message: String) {
+        Log.i("Kall_Muscle", "JS: $message")
+        activityRef.get()?.handleInjectionSuccess()
+    }
+
+    @JavascriptInterface
+    fun onResponseHarvested(response: String) {
+        Log.i("Kall_Muscle", "JS: Harvesting Complete.")
+        activityRef.get()?.handleResponseHarvested(response)
+    }
+
+    @JavascriptInterface
+    fun onError(errorMessage: String) {
+        Log.e("Kall_Muscle", "JS ERROR: $errorMessage")
+        activityRef.get()?.handleError(errorMessage)
+    }
+}
+
