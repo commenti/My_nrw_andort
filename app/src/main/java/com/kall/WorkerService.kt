@@ -28,9 +28,9 @@ class WorkerService : Service() {
 
         AppLogger.log("🛡️ WORKER: Booting 24/7 Shield for WebView...")
         
-        // Python Backend से टास्क सुनने वाला राडार चालू करो
+        // Python Backend से टास्क सुनने वाला राडार (Polling) चालू करो
         SupabaseManager.initializeNetworkListener { task ->
-            AppLogger.log("☁️ CLOUD: Task ${task.id} received! Waking up WebView...")
+            AppLogger.log("☁️ CLOUD: Task ${task.id} received! Waking up WebView Engine...")
             TaskMemory.currentTask = task
             triggerFullScreenAlarm()
         }
@@ -75,7 +75,7 @@ class WorkerService : Service() {
                 .setContentText("Waking up WebView Engine...")
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setCategory(NotificationCompat.CATEGORY_ALARM)
-                .setFullScreenIntent(pendingIntent, true) // Android 15/16 Full Screen Wake-up
+                .setFullScreenIntent(pendingIntent, true) // Android 14/15/16 Full Screen Wake-up
                 .setAutoCancel(true)
                 .build()
 
