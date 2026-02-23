@@ -12,29 +12,21 @@ import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
-data class InteractionTask(
-    val id: String,
-    val prompt: String,
-    var status: String,
-    var response: String? = null
-)
-
 /**
- * ARCHITECTURE CONTRACT: SupabaseManager (The Nervous System)
- * Version: 4.1 (Production - Hardened REST Polling)
+ * ARCHITECTURE CONTRACT: SupabaseManager
+ * Role: 100% Native REST Polling (No WebSockets).
+ * NOTE: InteractionTask is now strictly imported from api.kt
  */
 object SupabaseManager {
 
     private const val TAG = "Kall_NervousSystem"
     private const val TABLE_QUEUE = "ai_tasks"
 
-    // FIXME: Migrate to BuildConfig.SUPABASE_URL in production
     private const val SUPABASE_URL = "https://aeopowovqksexgvseiyq.supabase.co"
     private const val SUPABASE_KEY = "sb_publishable_HX5GTYwHATs3gTksy-ZV9w_AQNIfM7t"
 
-    private const val TIMEOUT_MS = 10000 // 10 seconds timeout to prevent thread hanging
+    private const val TIMEOUT_MS = 10000
 
-    // Use SupervisorJob to prevent one failed request from killing the entire polling scope
     private val networkScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     fun initializeNetworkListener(onNewTask: (InteractionTask) -> Unit) {
@@ -43,7 +35,7 @@ object SupabaseManager {
         networkScope.launch {
             while (true) {
                 fetchPendingTask(onNewTask)
-                delay(2500) // 2.5s Polling Interval
+                delay(2500)
             }
         }
     }
@@ -69,25 +61,18 @@ object SupabaseManager {
                 if (jsonArray.length() > 0) {
                     val firstObj = jsonArray.getJSONObject(0)
                     
-                    // Strict validation: Reject if ID or Prompt is missing/empty
                     val id = firstObj.optString("id", "").trim()
                     val prompt = firstObj.optString("prompt", "").trim()
 
                     if (id.isNotEmpty() && prompt.isNotEmpty()) {
-                        Log.i(TAG, "POLLING: Found pending task: $id | Payload size: ${prompt.length} chars")
-                        
+                        Log.i(TAG, "POLLING: Found pending task: $id")
                         val task = InteractionTask(id = id, prompt = prompt, status = "pending")
                         
                         if (lockTask(task.id)) {
-                            Log.i(TAG, "POLLING: Task locked successfully. Dispatching to worker.")
                             onNewTask(task)
                         }
-                    } else {
-                        Log.w(TAG, "POLLING: Fetched task has empty ID or Prompt. Ignoring.")
                     }
                 }
-            } else {
-                Log.w(TAG, "POLLING HTTP ERROR: ${connection.responseCode}")
             }
         } catch (e: Exception) {
             Log.e(TAG, "POLLING EXCEPTION: ${e.message}")
@@ -113,9 +98,7 @@ object SupabaseManager {
             connection.setRequestProperty("Prefer", "return=representation")
             connection.doOutput = true
 
-            val jsonBody = JSONObject().apply {
-                put("status", "processing")
-            }
+            val jsonBody = JSONObject().apply { put("status", "processing") }
 
             connection.outputStream.use { os ->
                 os.write(jsonBody.toString().toByteArray(Charsets.UTF_8))
@@ -125,14 +108,13 @@ object SupabaseManager {
                 val responseStr = readStream(connection.inputStream)
                 val jsonArray = JSONArray(responseStr)
                 val success = jsonArray.length() > 0
-                if (success) Log.i(TAG, "LOCK: Task $taskId is securely locked.")
+                if (success) Log.i(TAG, "LOCK: Task $taskId securely locked.")
                 success
             } else {
-                Log.e(TAG, "LOCK FAILED: HTTP ${connection.responseCode}")
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "LOCK EXCEPTION: Task $taskId lock failed - ${e.message}")
+            Log.e(TAG, "LOCK EXCEPTION: ${e.message}")
             false
         } finally {
             connection?.disconnect()
@@ -166,10 +148,9 @@ object SupabaseManager {
                 }
 
                 if (connection.responseCode in 200..299) {
-                    Log.i(TAG, "SUCCESS: Task ${task.id} updated to '${task.status}' on cloud.")
+                    Log.i(TAG, "SUCCESS: Task ${task.id} updated on cloud.")
                 } else {
-                    val errorStr = readStream(connection.errorStream)
-                    Log.e(TAG, "DB ERROR: Failed to ack task ${task.id} - HTTP ${connection.responseCode} | $errorStr")
+                    Log.e(TAG, "DB ERROR: Failed to ack task ${task.id} - HTTP ${connection.responseCode}")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "ACK EXCEPTION: ${e.message}")
@@ -188,4 +169,3 @@ object SupabaseManager {
         }
     }
 }
-
