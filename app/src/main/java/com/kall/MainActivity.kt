@@ -19,11 +19,6 @@ import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 import java.lang.ref.WeakReference
 
-/**
- * ARCHITECTURE CONTRACT: MainActivity.kt
- * Role: The Executor (Headless WebView & State Machine).
- * Logic: Implements DOM Readiness Polling for SPA compatibility.
- */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
@@ -33,7 +28,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "Kall_Muscle"
         private const val TARGET_URL = "https://chat.qwen.ai/" 
-        private const val MAX_DOM_POLL_ATTEMPTS = 15 // 15 seconds max wait for SPA render
+        private const val MAX_DOM_POLL_ATTEMPTS = 15 
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -75,7 +70,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
+    @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
     private fun setupHeadlessWebView() {
         webView = WebView(this).apply {
             settings.apply {
@@ -93,6 +88,7 @@ class MainActivity : AppCompatActivity() {
             cookieManager.setAcceptCookie(true)
             cookieManager.setAcceptThirdPartyCookies(this, true)
 
+            // 🚨 Re-attached the missing Bridge Reference here
             addJavascriptInterface(NeuroBridge(WeakReference(this@MainActivity)), "AndroidBridge")
 
             webViewClient = object : WebViewClient() {
@@ -104,7 +100,6 @@ class MainActivity : AppCompatActivity() {
                     view?.evaluateJavascript(JsInjector.BOOT_IMMORTALITY_SCRIPT, null)
                     Log.i(TAG, "STATE: HTML Loaded. Waiting for SPA to render DOM...")
                     
-                    // 🚨 DO NOT EXECUTE IMMEDIATELY. Start DOM Polling.
                     if (currentTask != null) {
                         pollDomReadinessAndExecute(0)
                     }
@@ -119,9 +114,6 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl(TARGET_URL)
     }
 
-    // ==========================================
-    // 🚨 SMART DOM POLLER & EXECUTION LOGIC
-    // ==========================================
     fun onNewTaskReceived(task: InteractionTask) {
         runOnUiThread {
             Log.i(TAG, "SIGNAL: New Task ${task.id} incoming.")
@@ -138,9 +130,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Recursively polls the WebView until the React/Vue frontend actually renders the input box.
-     */
     private fun pollDomReadinessAndExecute(attempt: Int) {
         if (attempt >= MAX_DOM_POLL_ATTEMPTS) {
             Log.e(TAG, "TIMEOUT: DOM never rendered the input box. Triggering Self-Healing...")
@@ -157,8 +146,6 @@ class MainActivity : AppCompatActivity() {
                 Log.i(TAG, "STATUS: DOM is READY ✅. Injecting payload for task ${currentTask?.id}...")
                 currentTask?.let { executeTask(it) }
             } else {
-                Log.w(TAG, "STATUS: Waiting for DOM... (Attempt ${attempt + 1}/$MAX_DOM_POLL_ATTEMPTS)")
-                // Wait 1 second and check again
                 webView.postDelayed({ pollDomReadinessAndExecute(attempt + 1) }, 1000)
             }
         }
@@ -169,10 +156,6 @@ class MainActivity : AppCompatActivity() {
         webView.evaluateJavascript(script, null)
     }
 
-    // ==========================================
-    // PUBLIC HANDLERS FOR THE BRIDGE
-    // ==========================================
-    
     fun handleInjectionSuccess() {
         runOnUiThread {
             webView.evaluateJavascript(JsInjector.HARVESTER_SCRIPT, null)
@@ -202,7 +185,7 @@ class MainActivity : AppCompatActivity() {
 
     fun triggerSelfHealingProtocol() {
         isPageLoaded = false
-        currentTask = null // Prevent poison pill tasks from infinite loop reloading
+        currentTask = null
         webView.postDelayed({ webView.reload() }, 3000)
     }
 
@@ -222,3 +205,34 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 }
+
+// ==========================================
+// 🌉 JS TO ANDROID COMMUNICATION BRIDGE 
+// (Strictly attached at the bottom of MainActivity.kt)
+// ==========================================
+class NeuroBridge(private val activityRef: WeakReference<MainActivity>) {
+    
+    @JavascriptInterface
+    fun onChunkProgress(currentChunk: Int, totalChunks: Int) {
+        Log.i("Kall_Muscle", "JS: Injecting chunk $currentChunk of $totalChunks...")
+    }
+
+    @JavascriptInterface
+    fun onInjectionSuccess(message: String) {
+        Log.i("Kall_Muscle", "JS: $message")
+        activityRef.get()?.handleInjectionSuccess()
+    }
+
+    @JavascriptInterface
+    fun onResponseHarvested(response: String) {
+        Log.i("Kall_Muscle", "JS: Harvesting Complete.")
+        activityRef.get()?.handleResponseHarvested(response)
+    }
+
+    @JavascriptInterface
+    fun onError(errorMessage: String) {
+        Log.e("Kall_Muscle", "JS ERROR: $errorMessage")
+        activityRef.get()?.handleError(errorMessage)
+    }
+}
+
