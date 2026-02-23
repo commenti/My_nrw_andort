@@ -109,3 +109,22 @@ class WorkerService : Service() {
         }
     }
 }
+
+// ==========================================
+// 🚨 GLOBAL MEMORY & SCREAMING LOGGER (The Missing Pieces)
+// ==========================================
+object TaskMemory {
+    var currentTask: InteractionTask? = null
+}
+
+object AppLogger {
+    private val logs = mutableListOf<String>()
+    
+    fun log(message: String) {
+        val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+        logs.add("[$time] $message")
+        android.util.Log.i("Kall_AppLogger", message) // Android Studio के Logcat के लिए
+    }
+    
+    fun getLogs(): String = logs.joinToString("\n\n")
+}
