@@ -7,79 +7,108 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 
 /**
  * ARCHITECTURE CONTRACT: WorkerService.kt
- * Role: The Shield & The Watchman. 
- * Purpose: Prevents Android 14/15 Doze mode and listens to Supabase 24/7.
- * When a heavy payload (task) arrives, it wakes up the MainActivity (WebView).
+ * Role: The Shield & The Watchman.
+ * Purpose: Single Source of Truth for DB Polling. Wakes MainActivity safely via Full-Screen Intents.
+ * Compatibility: Hardened for Android 14 (API 34+) Foreground Service FGS policies.
  */
 class WorkerService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
-    private val CHANNEL_ID = "KallWorkerChannel"
-    private val ALARM_CHANNEL_ID = "KallAlarmChannel"
+    
+    companion object {
+        private const val CHANNEL_ID = "KallWorkerChannel"
+        private const val ALARM_CHANNEL_ID = "KallAlarmChannel"
+        private const val WAKELOCK_TIMEOUT_MS = 10 * 60 * 1000L // 10 Minutes max per lock
+    }
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannels()
         acquireWakeLock()
 
-        AppLogger.log("🛡️ WORKER: Booting 24/7 Shield for WebView Architecture...")
+        AppLogger.log("🛡️ WORKER: Booting 24/7 Shield. Taking exclusive control of network polling.")
         
-        // 🚨 Python Backend से 'बड़ा ट्रक' (Task) सुनने वाला राडार चालू करो
+        // ARCHITECTURE RULE: Only WorkerService polls the network.
+        // MainActivity must NOT call this method.
         SupabaseManager.initializeNetworkListener { task ->
-            AppLogger.log("☁️ CLOUD: Heavy Payload Task ${task.id} received! Waking up WebView...")
-            TaskMemory.currentTask = task
-            triggerFullScreenAlarm() // WebView को धक्के मार कर जगाओ
+            AppLogger.log("☁️ CLOUD: Heavy Payload Task ${task.id} received! Waking UI...")
+            triggerFullScreenAlarm(task)
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Neuro-Link Active")
-            .setContentText("Listening to Python 24/7 in stealth mode...")
-            .setSmallIcon(android.R.drawable.ic_menu_info_details)
+            .setContentText("Maintaining autonomous background connection...")
+            .setSmallIcon(android.R.drawable.ic_menu_info_details) // FIXME: Replace with custom app icon
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
             .build()
 
-        startForeground(1, notification)
+        // 🚨 REQUIRED FOR ANDROID 14+: Must specify Foreground Service Type
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceCompat.startForeground(
+                this, 
+                1, 
+                notification, 
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) 
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC 
+                else 0
+            )
+        } else {
+            startForeground(1, notification)
+        }
+        
         return START_STICKY 
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun acquireWakeLock() {
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "Kall::BackgroundWorkerLock"
-        ).apply { 
-            acquire(10 * 60 * 1000L) // CPU को सोने नहीं देगा
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "Kall::BackgroundWorkerLock"
+            ).apply { 
+                setReferenceCounted(false)
+                acquire(WAKELOCK_TIMEOUT_MS) 
+            }
+        } catch (e: Exception) {
+            AppLogger.log("⚠️ WAKELOCK ERROR: ${e.message}")
         }
     }
 
-    private fun triggerFullScreenAlarm() {
+    private fun triggerFullScreenAlarm(task: InteractionTask) {
         try {
-            // MainActivity (WebView Engine) को चालू करने का इंटेंट
+            // 🚨 FIX: Using SINGLE_TOP to preserve existing WebView state instead of CLEAR_TOP
             val intent = Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                // Pass task data securely via Intent Extras, NOT Global State
+                putExtra("TASK_ID", task.id)
+                putExtra("TASK_PROMPT", task.prompt)
             }
             
             val pendingIntent = PendingIntent.getActivity(
-                this, 0, intent, 
+                this, 
+                task.id.hashCode(), // Unique request code per task
+                intent, 
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            // Android 14/15+ के लिए फुल स्क्रीन अलार्म
             val alarmNotification = NotificationCompat.Builder(this, ALARM_CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_menu_info_details)
                 .setContentTitle("Incoming AI Task")
-                .setContentText("Waking up WebView Engine to handle payload...")
+                .setContentText("Processing payload: ${task.id}")
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setCategory(NotificationCompat.CATEGORY_ALARM)
                 .setFullScreenIntent(pendingIntent, true) 
@@ -87,44 +116,60 @@ class WorkerService : Service() {
                 .build()
 
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.notify(99, alarmNotification)
+            nm.notify(task.id.hashCode(), alarmNotification) // Use unique ID to prevent overwriting
             
         } catch (e: Exception) {
-            AppLogger.log("❌ FATAL ALARM HACK ERROR: ${e.message}")
+            AppLogger.log("❌ FATAL ALARM DISPATCH ERROR: ${e.message}")
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        wakeLock?.let { if (it.isHeld) it.release() }
+        try {
+            wakeLock?.let { if (it.isHeld) it.release() }
+        } catch (e: Exception) {
+            AppLogger.log("⚠️ WAKELOCK RELEASE ERROR: ${e.message}")
+        }
     }
 
     private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(NotificationManager::class.java)
-            // Worker सर्विस के लिए साइलेंट चैनल
-            manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Kall Worker", NotificationManager.IMPORTANCE_LOW))
-            // अलार्म के लिए हाई प्रायोरिटी चैनल
-            manager.createNotificationChannel(NotificationChannel(ALARM_CHANNEL_ID, "Kall Alarm", NotificationManager.IMPORTANCE_HIGH))
+            
+            val workerChannel = NotificationChannel(CHANNEL_ID, "Background Worker", NotificationManager.IMPORTANCE_LOW)
+            workerChannel.description = "Keeps the background service alive"
+            manager.createNotificationChannel(workerChannel)
+            
+            val alarmChannel = NotificationChannel(ALARM_CHANNEL_ID, "Task Alarms", NotificationManager.IMPORTANCE_HIGH)
+            alarmChannel.description = "Wakes the screen for incoming payloads"
+            // Bypass Doze mode requirements
+            alarmChannel.setBypassDnd(true)
+            manager.createNotificationChannel(alarmChannel)
         }
     }
 }
 
 // ==========================================
-// 🚨 GLOBAL MEMORY & SCREAMING LOGGER (The Missing Pieces)
+// 🚨 SYSTEM OBSERVABILITY
 // ==========================================
-object TaskMemory {
-    var currentTask: InteractionTask? = null
-}
-
 object AppLogger {
     private val logs = mutableListOf<String>()
     
     fun log(message: String) {
         val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-        logs.add("[$time] $message")
-        android.util.Log.i("Kall_AppLogger", message) // Android Studio के Logcat के लिए
+        val formattedMsg = "[$time] $message"
+        
+        synchronized(logs) {
+            if (logs.size > 500) logs.removeAt(0) // Prevent OutOfMemoryError
+            logs.add(formattedMsg)
+        }
+        
+        android.util.Log.i("Kall_AppLogger", message)
     }
     
-    fun getLogs(): String = logs.joinToString("\n\n")
+    fun getLogs(): String {
+        synchronized(logs) {
+            return logs.joinToString("\n\n")
+        }
+    }
 }
