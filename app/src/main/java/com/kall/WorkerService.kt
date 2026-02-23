@@ -12,9 +12,12 @@ import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 
-// ==========================================
-// 1. THE SHIELD & THE WATCHMAN (For WebView Architecture)
-// ==========================================
+/**
+ * ARCHITECTURE CONTRACT: WorkerService.kt
+ * Role: The Shield & The Watchman. 
+ * Purpose: Prevents Android 14/15 Doze mode and listens to Supabase 24/7.
+ * When a heavy payload (task) arrives, it wakes up the MainActivity (WebView).
+ */
 class WorkerService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -26,23 +29,24 @@ class WorkerService : Service() {
         createNotificationChannels()
         acquireWakeLock()
 
-        AppLogger.log("🛡️ WORKER: Booting 24/7 Shield for WebView...")
+        AppLogger.log("🛡️ WORKER: Booting 24/7 Shield for WebView Architecture...")
         
-        // Python Backend से टास्क सुनने वाला राडार (Polling) चालू करो
+        // 🚨 Python Backend से 'बड़ा ट्रक' (Task) सुनने वाला राडार चालू करो
         SupabaseManager.initializeNetworkListener { task ->
-            AppLogger.log("☁️ CLOUD: Task ${task.id} received! Waking up WebView Engine...")
+            AppLogger.log("☁️ CLOUD: Heavy Payload Task ${task.id} received! Waking up WebView...")
             TaskMemory.currentTask = task
-            triggerFullScreenAlarm()
+            triggerFullScreenAlarm() // WebView को धक्के मार कर जगाओ
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Neuro-Link Active")
-            .setContentText("Listening to Python 24/7...")
+            .setContentText("Listening to Python 24/7 in stealth mode...")
             .setSmallIcon(android.R.drawable.ic_menu_info_details)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
+
         startForeground(1, notification)
         return START_STICKY 
     }
@@ -54,12 +58,14 @@ class WorkerService : Service() {
         wakeLock = powerManager.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
             "Kall::BackgroundWorkerLock"
-        ).apply { acquire(10 * 60 * 1000L) }
+        ).apply { 
+            acquire(10 * 60 * 1000L) // CPU को सोने नहीं देगा
+        }
     }
 
     private fun triggerFullScreenAlarm() {
         try {
-            // जैसे ही मैसेज आए, MainActivity (WebView) को धक्के मार कर स्क्रीन पर लाओ
+            // MainActivity (WebView Engine) को चालू करने का इंटेंट
             val intent = Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             }
@@ -69,13 +75,14 @@ class WorkerService : Service() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
+            // Android 14/15+ के लिए फुल स्क्रीन अलार्म
             val alarmNotification = NotificationCompat.Builder(this, ALARM_CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_menu_info_details)
                 .setContentTitle("Incoming AI Task")
-                .setContentText("Waking up WebView Engine...")
+                .setContentText("Waking up WebView Engine to handle payload...")
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setCategory(NotificationCompat.CATEGORY_ALARM)
-                .setFullScreenIntent(pendingIntent, true) // Android 14/15/16 Full Screen Wake-up
+                .setFullScreenIntent(pendingIntent, true) 
                 .setAutoCancel(true)
                 .build()
 
@@ -95,9 +102,10 @@ class WorkerService : Service() {
     private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(NotificationManager::class.java)
+            // Worker सर्विस के लिए साइलेंट चैनल
             manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Kall Worker", NotificationManager.IMPORTANCE_LOW))
+            // अलार्म के लिए हाई प्रायोरिटी चैनल
             manager.createNotificationChannel(NotificationChannel(ALARM_CHANNEL_ID, "Kall Alarm", NotificationManager.IMPORTANCE_HIGH))
         }
     }
 }
-
